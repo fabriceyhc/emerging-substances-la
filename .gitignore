@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------------------
+# Protected data. The LACME extract contains decedent names; the processed
+# mentions table is one row per decedent per substance. Neither belongs in a
+# repository. Both are regenerable or supplied by the operator.
+#
+# Do not add exceptions to these three rules.
+# ---------------------------------------------------------------------------
+data/raw/lacme/
+data/processed/
+
+# Nothing else under data/ is sensitive — the NFLIS catalog and the LA County
+# zipcode boundaries are public and are committed deliberately.
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
