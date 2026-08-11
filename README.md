@@ -30,6 +30,7 @@ python -m emerging.tree         check     # family members absent from LA
 python -m emerging.treescan     scan      # tree-temporal scan, current quarter
 python -m emerging.treescan     backtest  # as-of sweep + head-to-head vs EB05
 python -m emerging.treescan     plot
+python -m emerging.treescan_validate compare   # vs the TreeScan C++ binary
 python -m emerging.polysubstance profile  # cause vs passenger
 python -m emerging.polysubstance plot
 python -m emerging.geo          cluster   # is it localized?
@@ -48,9 +49,9 @@ sweep.
 | `trends.py` | gamma-Poisson empirical-Bayes ranking, as-of backtest, alarm history, watchlist, recording diagnostics, figures |
 | `tree.py` | the substance hierarchy — NFLIS categories plus a pharmacological family layer; **the domain-knowledge core**, a scan can only find branches this file encodes |
 | `treescan.py` | tree-temporal scan statistic: every node × every recent window, with a Monte Carlo p-value adjusted for the whole search |
+| `treescan_validate.py` | exports our tree/counts to TreeScan's input format and diffs the two implementations — needs the binary, which is not in the repo |
 | `polysubstance.py` | is a flagged substance a cause of death or a passenger — co-occurrence plus position on the ME's cause line |
 | `geo.py` | case-control permutation test for spatial localization against the overdose-death background |
-
 | `cohort.py` | overdose-death cohort definition — **a vendored copy**, see below |
 | `paths.py` | where the data lives |
 
@@ -305,6 +306,71 @@ the constant stays a claim about pharmacology rather than a wish list. Absent
 members are kept on purpose: medetomidine is in `Veterinary sedatives` today,
 so the branch already exists the quarter it is first coded.
 
+### Validated against the TreeScan binary
+
+`treescan.py` is a from-scratch implementation, which is a liability until it
+is checked against the reference. `python -m emerging.treescan_validate compare`
+runs both on the same tree and the same counts and reports every difference.
+
+| | strict tree | DAG (production) |
+|---|---|---|
+| Nodes in the search space | 141 both | **155 both** |
+| Cuts compared exactly | 57 | **65** |
+| Max abs LLR difference | 5.0e-07 | **5.0e-07** |
+| Best window identical | 57/57 | **65/65** |
+| Cases in window identical | 57/57 | **65/65** |
+| Max abs p-value difference (9,999 reps each) | 0.0041 | **0.0039** |
+| Same verdict at p = 0.01 | all | all |
+
+5e-07 is TreeScan's printf precision — it writes 6 decimal places, so the LLRs
+are identical to the last digit either program prints. The p-values are two
+independent Monte Carlo runs and agree to within simulation error.
+
+Getting there required matching four settings whose TreeScan defaults differ
+from ours, and each one is a way the comparison could have looked like a
+disagreement while being nothing of the kind:
+
+- `conditional-type=2` (condition on the node), not the shipped example's
+  `NODEANDTIME`.
+- `apply-risk-window-restriction=n`. It defaults to *on* at 20%, silently
+  dropping short windows.
+- `include-identical-parent-cuts=y`, so TreeScan reports the duplicate
+  leaf-set nodes our `_dedupe` removes.
+- `minimum-node-cases=2`. TreeScan will not form a cut from fewer than 2
+  cases — in the node or in the window. This is a property of the *search
+  space*, not of reporting, so leaving ours at 0 would have had our null
+  maximum range over nodes TreeScan never sees.
+
+Two things the comparison found:
+
+- **A real bug in ours.** Metoprolol showed 3 observed against 3.000 expected
+  and an LLR of 3.3e-16 — `c > e` came out true on the last bit of a float. It
+  could never win a maximum, but it put a node with no excess into the
+  positive-LLR list. `_llr` now floors at 1e-9.
+- Substance names break TreeScan's input format. It is comma-delimited with no
+  quoting, so `1,1-Difluoroethane` parses as an extra column; the first run
+  died with "record 17 has node referencing self as parent". The exporter now
+  writes opaque IDs and maps names back.
+
+Also worth recording: the export is checked before it is used. `verify_export`
+recomputes every node's descendant-leaf closure *from the emitted file* and
+requires it to equal our leaf set, so a mistranslated DAG fails loudly instead
+of quietly comparing two different trees.
+
+**Performance** (155 nodes, 125 leaves, 12 quarters, single-threaded):
+
+| Replications | TreeScan (C++) | ours (Python/numpy) |
+|---|---|---|
+| 999 | 2.13 s | 0.43 s |
+| 9,999 | 2.25 s | 3.5 s |
+| 99,999 | 12.4 s | 34 s |
+
+Comparable, with different shapes: TreeScan carries a ~2 s constant and then
+scales well, ours is near-linear at ~0.35 ms per replication. TreeScan also
+uses all cores (99,999 replications in 2.5 s with `--parallel-processes 0`)
+where ours is single-threaded. At the replication counts this project needs,
+neither is a constraint.
+
 ### Calibration
 
 The scan produces p-values, so the property that matters is that they mean what
@@ -314,6 +380,11 @@ the reference series says — the observed rejection rates are 0.050, 0.096,
 test_treescan.py::test_null_calibration` asserts this, along with the specific
 way it would break quietly: applying the `min_cases` floor to the observed data
 but not to the simulations.
+
+`tests/test_treescan_parity.py` re-runs the binary comparison as a test. It
+skips when the binary is absent, so it is a no-op for anyone who only has this
+repository, and it is the guard against our implementation drifting away from
+the reference on some later edit.
 
 **One thing the recurrence interval does not cover: repeated looks.** It is the
 multiplicity across nodes and windows *within one analysis*. Running the scan

@@ -112,6 +112,9 @@ N_SIM = 9999
 # is roughly once per 25 years of scanning — but see the caveat above about
 # repeated looks.
 RI_THRESHOLD = 100.0
+# Floor below which an LLR is floating-point noise rather than an excess.
+# Real signals here are >= 1e-3; see `_llr`.
+_LLR_EPS = 1e-9
 
 SCAN_PATH = RESULTS_DIR / "treescan_signals.csv"
 BACKTEST_PATH = RESULTS_DIR / "treescan_backtest.csv"
@@ -139,7 +142,13 @@ def _llr(c: np.ndarray, n: np.ndarray, e: np.ndarray) -> np.ndarray:
         term1 = np.where(c > 0, c * np.log(ratio1), 0.0)
         term2 = np.where(rest_c > 0, rest_c * np.log(ratio2), 0.0)
     out = term1 + term2
-    return np.where((c > e) & np.isfinite(out), out, 0.0)
+    # The `out > _LLR_EPS` clause is not cosmetic. When c equals e exactly --
+    # a node whose window count lands on its expectation, e.g. metoprolol at
+    # 3 observed and 3.0 expected -- `c > e` can still be True on the last bit
+    # and the LLR comes out at 3e-16. That never wins a maximum, but it puts a
+    # node with literally no excess into the "positive LLR" list, which is how
+    # the comparison against the TreeScan binary first surfaced it.
+    return np.where((c > e) & (out > _LLR_EPS) & np.isfinite(out), out, 0.0)
 
 
 def _membership(nodes: list[Node], leaves: list[str]) -> np.ndarray:

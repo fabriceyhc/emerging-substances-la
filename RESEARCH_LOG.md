@@ -18,7 +18,7 @@ substances rising in LA County overdose deaths.
 | Extraction | `extract.py` | 219 substances, 99.8% decedent coverage, F1 0.962–0.997 vs the ME's own flags |
 | Detection | `trends.py` | GPS/EB05 ranking, as-of backtest, alarm history, watchlist, regime diagnostics |
 | Hierarchy | `tree.py` | 211 substances → 246 testable nodes (NFLIS categories + a pharmacological family layer) |
-| Scan | `treescan.py` | tree-temporal scan, multiplicity-adjusted; head-to-head vs EB05 |
+| Scan | `treescan.py` | tree-temporal scan, multiplicity-adjusted; head-to-head vs EB05 — **validated against the TreeScan C++ binary, LLRs identical to 5e-07** |
 | Interpretation | `polysubstance.py` | cause-of-death vs passenger verdicts |
 | Localization | `geo.py` | case-control random-labelling permutation test |
 
@@ -135,6 +135,76 @@ qualifies.
   `_fit_gps_prior`. Revisit on a substance × zip × quarter table.
 - **Spatial methods as *detectors*** — they stay downstream of the temporal
   detector. At n=9 there is nothing to scan.
+
+---
+
+## 2026-08-11 — Validated the scan against the TreeScan binary
+
+Downloaded TreeScan v2.4 (treescan.org, registration required) and ran it
+against ours on the same tree and the same counts. **They compute the same
+statistic.**
+
+| | strict tree | DAG (production) |
+|---|---|---|
+| Nodes in the search space | 141 both | 155 both |
+| Cuts compared exactly | 57 | 65 |
+| Max abs LLR difference | 5.0e-07 | 5.0e-07 |
+| Best window / window counts identical | 57/57 | 65/65 |
+| Max abs p difference (9,999 reps each) | 0.0041 | 0.0039 |
+
+5e-07 is TreeScan's printf precision — the LLRs agree to the last digit either
+program prints. This closes the main open liability from the P1 entry below:
+the unit tests showed we were self-consistent and calibrated, neither of which
+would have caught computing the wrong statistic consistently.
+
+**The comparison is only possible in one configuration, and that is worth
+recording.** TreeScan's tree-temporal model spreads each node's cases
+*uniformly* over the study period. Ours generalises that to an arbitrary
+reference series, because a quarter with 18% fewer overdose deaths is not a
+quarter with 18% less time — which is the entire point of `--reference deaths`.
+So the validation runs ours with a uniform reference, where the two coincide.
+Everything except the generalisation is checked; the generalisation itself is
+one line (`_window_shares`) with its own unit test.
+
+**One real bug found.** Metoprolol: 3 observed against 3.000 expected, LLR
+3.3e-16, because `c > e` came out true on the last bit of a float. It could
+never win a maximum, so no published number moves, but it put a node with no
+excess into the positive-LLR list. `_llr` now floors at 1e-9.
+
+**Four settings had to be matched**, each of which would have looked like a
+disagreement: `conditional-type=2` (node, not node-and-time);
+`apply-risk-window-restriction=n` (defaults *on* at 20%, silently dropping
+short windows); `include-identical-parent-cuts=y`; and `minimum-node-cases=2`,
+because TreeScan forms no cut from fewer than 2 cases. That last one is a
+property of the *search space*, not of reporting — left unmatched, our null
+maximum would range over nodes TreeScan never sees.
+
+*Practical note for anyone re-running this:* TreeScan's input files are
+comma-delimited with no quoting, so `1,1-Difluoroethane` parses as an extra
+column and the run dies with "record 17 has node referencing self as parent".
+The exporter writes opaque IDs and maps names back. It also recomputes every
+node's leaf closure *from the emitted file* and refuses to run if it disagrees
+with ours, so a mistranslated DAG fails loudly rather than quietly comparing
+two different trees.
+
+**Performance** (155 nodes, 12 quarters, single-threaded): 999 reps — TreeScan
+2.13s, ours 0.43s; 9,999 — 2.25s vs 3.5s; 99,999 — 12.4s vs 34s. Different
+shapes: TreeScan carries a ~2s constant then scales well and uses all cores
+(99,999 in 2.5s multi-threaded); ours is near-linear at ~0.35 ms/replication
+and single-threaded. Neither is a constraint at the counts we need.
+
+**Decision: keep ours, drop the binary from the workflow.** It stays in
+`treescan/` (gitignored — it is Kulldorff's, under its own licence) purely so
+`tests/test_treescan_parity.py` can re-run the check. Those tests skip when it
+is absent, so the repository still stands alone.
+
+*Open, not yet acted on:* no Python implementation of the tree-based scan
+statistic appears to exist — nothing on PyPI under the obvious names, and R's
+`TreeMineR` covers the tree-only variants (Kulldorff 2003/2013), not the
+tree-temporal one. Extracting `tree.py` + `treescan.py` as a standalone package
+looks worthwhile, but the reference-series generalisation is ours and not in
+the literature, so it would need to be presented as an extension rather than a
+reimplementation, and validated on more than one dataset first.
 
 ---
 

@@ -21,6 +21,12 @@ dependencies = [
 [tool.setuptools]
 packages = ["emerging"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: runs the full 9,999-replicate Monte Carlo against the TreeScan binary",
+]
+
 [tool.ruff]
 line-length = 88
 target-version = "py310"
