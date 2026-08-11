@@ -875,6 +875,40 @@ Three caveats to carry with the number:
   Gabriel / Pomona Valley", not five zipcodes.
 - **156 deaths.** Enough for a slope, not enough to subdivide.
 
+### The cluster, profiled — and it is a methamphetamine story
+
+`svtt profile` characterises the most likely cluster against the rest of the
+county, because "a place is rising" is not reportable until you know what is in
+it. For the Pomona cluster:
+
+- **It is Pomona.** 91768 (+19) and 91766 (+16) supply 35 of the 44-death
+  increase; the other three zips contribute 9 between them and are along for
+  the ride via the circle geometry.
+- **A level shift, not a burst** — 2022–23 runs 2–9 deaths a quarter, 2024–25
+  runs 6–17, stepping at 2024Q1 with no reversion.
+- **Not a pronouncement artifact** — 3.8% at shared facility addresses against
+  18.6% county-wide, at 26/27/44/47 distinct addresses across the four years.
+- **No substance drives it** — heroin 1.46×, PCP 1.44×, meth 1.16×, fentanyl
+  0.89×, cocaine 0.74× against county shares. More of the same supply.
+- **Who** — 55% LATINE against 38% county-wide, median age 48 against 44.
+
+Running SVTT per substance separates the two epidemics:
+
+| | county trend | most likely cluster | p |
+|---|---|---|---|
+| Fentanyl | **−16.25%/yr** | 91765, 7 zips, +3.8%/yr | **0.63** |
+| Methamphetamine | **−7.56%/yr** | 91741, 42 zips (Glendora–Azusa–Claremont–Pomona), **+5.98%/yr** | **0.02** |
+
+**Fentanyl is falling uniformly** — no significant spatial variation in its
+trend anywhere in the county. **Methamphetamine is not**: it falls half as fast
+and is *rising* across a broad eastern San Gabriel Valley region containing the
+all-cause cluster. The county-wide decline is fentanyl-led; the eastern-county
+rise is stimulant-involved.
+
+That changes what a response would be. A naloxone-and-test-strip package targets
+the part of the epidemic already receding fastest; the part that is growing has
+no equivalent pharmacological answer.
+
 ### What the denominator does and does not fix
 
 `census.py` supplies ACS resident population, 301 LA zips × 2013–2024, and

@@ -470,8 +470,45 @@ one-sided, and that a planted cluster is recovered. The calibration test runs
 the null with a deliberate **5× spread in baseline level across zips** — a
 level-based scan would light up on that, and SVTT must not. 8 tests pass.
 
-*Not yet done:* per-substance SVTT. The county-wide run was the high-value one
-and it is the one with the counts to support a slope.
+*Follow-up, same day — the cluster profiled and the substance identified.*
+`svtt profile` characterises the most likely cluster against the rest of the
+county, because "a place is rising" is not reportable until you know what is in
+it and whether it is an artifact.
+
+- **It is Pomona, not five zips.** 91768 (+19) and 91766 (+16) supply 35 of the
+  cluster's 44-death increase; 91789, 91765 and 91748 contribute 9 between them
+  and are along for the ride via the circle geometry. Report "Pomona", with the
+  neighbours as context.
+- **A level shift, not a burst.** Quarterly: 2022–23 runs 2–9 deaths, 2024–25
+  runs 6–17, with the step at 2024Q1 and no reversion. One incident or one
+  batch of late reporting would not look like this.
+- **Not an artifact of where people are pronounced.** 3.8% of cluster deaths
+  are at shared facility addresses against 18.6% county-wide, and the deaths
+  are at 26/27/44/47 distinct addresses across the four years. These are homes.
+- **No substance is driving it.** Cluster-vs-county shares: heroin 1.46x, PCP
+  1.44x, methamphetamine 1.16x, fentanyl 0.89x, cocaine 0.74x. The spread is
+  narrow; this is more of the same supply, not a new drug.
+- **Who:** 55% LATINE against 38% county-wide, median age 48 against 44, sex
+  identical. Pomona is a heavily Latino city so this partly reflects who lives
+  there, but it has obvious implications for who any outreach has to reach.
+
+*Per-substance SVTT, and it separates the two epidemics cleanly:*
+
+| | county trend | most likely cluster | p |
+|---|---|---|---|
+| Fentanyl | **−16.25%/yr** | 91765, 7 zips, +3.8%/yr | **0.63** |
+| Methamphetamine | **−7.56%/yr** | 91741, 42 zips (Glendora–Azusa–Claremont–Pomona), **+5.98%/yr** | **0.02** |
+
+**Fentanyl is falling uniformly everywhere** — no significant spatial variation
+in its trend anywhere in the county. **Methamphetamine is not**: it falls half
+as fast countywide and is *rising* across a broad eastern San Gabriel Valley
+region that contains the all-cause cluster. So the eastern-county rise is a
+methamphetamine phenomenon, and the county-wide decline is fentanyl-led.
+
+That distinction changes what a response would be. A naloxone-and-fentanyl
+-test-strip package is aimed at the part of the epidemic that is already
+receding fastest; the part that is growing, in the place it is growing, is
+stimulant-involved and has no equivalent pharmacological answer.
 
 ---
 

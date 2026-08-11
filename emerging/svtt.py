@@ -345,6 +345,103 @@ def scan(
     typer.echo(f"\nwrote {out_dir / name}")
 
 
+@app.command("profile")
+def profile(
+    results_dir: Path = typer.Option(RESULTS_DIR, "--results-dir"),
+    name: str = typer.Option("svtt_clusters.csv", "--name"),
+    mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
+    first_year: int = typer.Option(FIRST_YEAR, "--first-year"),
+    out_dir: Path = typer.Option(RESULTS_DIR, "--out-dir"),
+) -> None:
+    """Characterise the most likely cluster: what is in it, and is it real?
+
+    A trend cluster is a claim about a place, and the first three questions
+    anyone will ask are what substances are involved, whether it is an
+    artifact of where people are pronounced dead, and who is dying. This
+    answers all three against the rest of the county, so the cluster can be
+    reported rather than just located.
+    """
+    from emerging.cohort import filter_alcohol_only
+    from emerging.paths import LACME_PATH
+
+    res = pd.read_csv(results_dir / name)
+    if res.empty:
+        raise typer.Exit("no cluster to profile")
+    r = res.iloc[0]
+    members = set(str(r["zips"]).split("|"))
+
+    bg, sets = load_points(mentions, since=f"{first_year}-01-01")
+    meta = filter_alcohol_only(pd.read_csv(LACME_PATH, low_memory=False),
+                               verbose=False)
+    meta["dt"] = pd.to_datetime(meta["DeathDate"], format="mixed",
+                                errors="coerce")
+    bg = bg.join(meta[["CaseNumber", "Age", "Gender", "Race", "dt"]]
+                 .drop_duplicates("CaseNumber").set_index("CaseNumber"),
+                 on="CaseNumber")
+    bg["year"] = bg["dt"].dt.year
+    inside = bg["zip"].isin(members)
+    c, o = bg[inside], bg[~inside]
+    typer.echo(f"cluster: {int(r['n_zips'])} zips around {r['centre_zip']} "
+               f"({', '.join(sorted(members))})")
+    typer.echo(f"{len(c)} deaths inside, {len(o)} outside, "
+               f"{first_year}–{bg['year'].max():.0f}\n")
+
+    typer.echo("WHICH ZIPS ACTUALLY MOVED")
+    t = c.pivot_table(index="zip", columns="year", values="CaseNumber",
+                      aggfunc="count", fill_value=0)
+    yrs = sorted(t.columns)
+    t["change"] = t[yrs[-2]] + t[yrs[-1]] - t[yrs[0]] - t[yrs[1]]
+    typer.echo(t.sort_values("change", ascending=False).to_string())
+
+    typer.echo("\nIS THE RISE A BURST OR A LEVEL SHIFT?")
+    byq = c.groupby([c["year"], c["dt"].dt.quarter]).size()
+    typer.echo("  " + "  ".join(f"{y}Q{q} {n}" for (y, q), n in byq.items()))
+
+    typer.echo("\nARTIFACT CHECKS")
+    typer.echo(f"  at a shared (facility) address: cluster "
+               f"{100 * c['at_facility'].mean():.1f}%  vs county "
+               f"{100 * o['at_facility'].mean():.1f}%")
+    for y in yrs:
+        cy = c[c["year"] == y]
+        typer.echo(f"    {int(y)}: {len(cy):3d} deaths at "
+                   f"{cy[['x', 'y']].drop_duplicates().shape[0]:3d} distinct "
+                   f"addresses")
+
+    typer.echo("\nSUBSTANCES (share of deaths naming it, cluster vs county)")
+    rows = []
+    for sub, cases in sets.items():
+        n = int(c["CaseNumber"].isin(cases).sum())
+        if n < 8:
+            continue
+        ci = c["CaseNumber"].isin(cases).mean()
+        oi = o["CaseNumber"].isin(cases).mean()
+        rows.append({"substance": sub, "n": n, "cluster_pct": 100 * ci,
+                     "county_pct": 100 * oi,
+                     "ratio": ci / oi if oi else np.nan})
+    subs = pd.DataFrame(rows).sort_values("ratio", ascending=False)
+    typer.echo(subs.to_string(index=False, float_format=lambda v: f"{v:.2f}"))
+    spread = subs["ratio"].max() - subs["ratio"].min()
+    typer.echo(f"  ratios span {subs['ratio'].min():.2f}–"
+               f"{subs['ratio'].max():.2f}"
+               + ("  → no substance is driving this; it is more of the same "
+                  "supply." if spread < 1.0 else
+                  "  → one substance stands out; investigate it."))
+
+    typer.echo("\nWHO")
+    for col in ("Gender", "Race"):
+        a = c[col].value_counts(normalize=True).mul(100)
+        b = o[col].value_counts(normalize=True).mul(100)
+        typer.echo(f"  {col}: " + ", ".join(
+            f"{k} {a.get(k, 0):.0f}% vs {b.get(k, 0):.0f}%"
+            for k in a.head(4).index))
+    typer.echo(f"  median age: cluster {c['Age'].median():.0f}, "
+               f"county {o['Age'].median():.0f}")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    subs.to_csv(out_dir / "svtt_cluster_substances.csv", index=False)
+    typer.echo(f"\nwrote {out_dir / 'svtt_cluster_substances.csv'}")
+
+
 @app.command("plot")
 def plot(
     results_dir: Path = typer.Option(RESULTS_DIR, "--results-dir"),
