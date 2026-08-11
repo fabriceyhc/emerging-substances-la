@@ -31,10 +31,12 @@ substances rising in LA County overdose deaths.
 
 **The four findings that changed what we can claim:**
 
-1. **Lidocaine is an adulterant, not a killer.** 17 of 17 recent deaths name
-   fentanyl, 0 name it alone, and it sits at 0.93 on the ME's cause line
-   (fentanyl: 0.13). The correct headline is "the fentanyl supply is being cut
-   differently".
+1. **Lidocaine is an adulterant, not a killer.** All 17 recent deaths name
+   fentanyl and none name it alone. On the ME's combined cause line — which is
+   ordered by clinical significance, not alphabetically — lidocaine is written
+   **last in 14 of 17 deaths (82%) and first in none**. Fentanyl is the
+   mirror image: first on 82% of multi-substance lines, last on 9%. The correct
+   headline is "the fentanyl supply is being cut differently".
 2. **Share growth ≠ death growth.** Total OD deaths fell 18% between windows,
    so a flat-count substance gains ×1.22 share for free. Cocaine posts EB05
    1.06 with `count_ratio` 0.90 — *a growing share of a shrinking total*.
@@ -136,8 +138,30 @@ Six items from a presentation. All six built.
 **Polysubstance / principal cause** (`polysubstance.py`, new). Two independent
 discriminators. Co-occurrence (`alone_pct`, `with_fentanyl_pct`) and — the
 better one — **position on the ME's combined cause line**, which is ordered by
-clinical significance, not alphabetically. Fentanyl sits at mean relative
-position 0.13, lidocaine at 0.93.
+clinical significance, not alphabetically. Reported three ways: `lead_pct`
+(named first), `last_pct` (named last), and `mean_rank_pct`, the average
+position on a 0 = always first to 1 = always last scale. Fentanyl 0.13,
+lidocaine 0.93.
+
+*Why the position is normalized rather than a mean ordinal (1…N).* Line length
+varies with substance type, and a raw mean position conflates "named late" with
+"appears on a long line" — a substance always named last scores 2 on a
+two-substance line and 5 on a five-substance line. The bias runs the wrong way
+for us: adulterants co-occur with more substances, sit on longer lines, and so
+would be inflated by a raw ordinal precisely where we most need the measure to
+be trustworthy. Ranking all 26 substances both ways gives **Spearman 0.79**,
+with large disagreements — methamphetamine is 20th of 26 raw but 7th
+normalized (short lines, so position 2 of 2 is *last*), and
+para-fluorofentanyl is 6th raw but 15th normalized (long lines, so position
+2.83 is the middle).
+
+*Cost of normalizing, recorded so nobody re-derives it:* on a two-substance
+line the score can only be 0 or 1, so short lines push toward the extremes;
+single-substance lines are undefined (0/0) and excluded from both `lead_pct`
+and `mean_rank_pct`; and it is an unweighted mean of ratios, so a 2-substance
+line counts as much as a 5-substance one. `last_pct` was added alongside
+because the normalized mean is the right thing to *rank* on but hard to read —
+"0% first, 82% last" states lidocaine's case more plainly than 0.93 does.
 
 *Tried and rejected:* which **field** the substance appeared in. Lidocaine is
 100% `CauseA`, identical to fentanyl, because the ME puts every substance on

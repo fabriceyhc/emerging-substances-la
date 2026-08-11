@@ -54,10 +54,10 @@ Four figures, written to results/figures/:
     known_emergences.png   the backtest set
 
 Usage:
-    python -m rosla_nowcast.emerging.trends rank
-    python -m rosla_nowcast.emerging.trends rank --recent-quarters 8 --top 30
-    python -m rosla_nowcast.emerging.trends backtest
-    python -m rosla_nowcast.emerging.trends plot
+    python -m emerging.trends rank
+    python -m emerging.trends rank --recent-quarters 8 --top 30
+    python -m emerging.trends backtest
+    python -m emerging.trends plot
 """
 
 from __future__ import annotations

@@ -63,9 +63,9 @@ Power is thin and the output says so. At n=10 this test detects only extreme
 localization; a non-significant result is not evidence of dispersion.
 
 Usage:
-    python -m rosla_nowcast.emerging.geo cluster
-    python -m rosla_nowcast.emerging.geo cluster --since 2022-01-01 --min-n 6
-    python -m rosla_nowcast.emerging.geo plot
+    python -m emerging.geo cluster
+    python -m emerging.geo cluster --since 2022-01-01 --min-n 6
+    python -m emerging.geo plot
 """
 
 from __future__ import annotations

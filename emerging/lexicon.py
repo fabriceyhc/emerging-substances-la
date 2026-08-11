@@ -28,9 +28,9 @@ aliases of <=5 characters (`FA`, `DOC`, `DOB`, `AMB`, `CBC`) that would collide
 with ordinary narrative words.
 
 Usage:
-    python -m rosla_nowcast.emerging.lexicon build
-    python -m rosla_nowcast.emerging.lexicon inspect fentanyl
-    python -m rosla_nowcast.emerging.lexicon inspect --alias METAMPHETAMINE
+    python -m emerging.lexicon build
+    python -m emerging.lexicon inspect fentanyl
+    python -m emerging.lexicon inspect --alias METAMPHETAMINE
 """
 
 from __future__ import annotations
@@ -461,7 +461,7 @@ def load_lexicon(
     if not lexicon_path.exists() or not meta_path.exists():
         raise FileNotFoundError(
             f"{lexicon_path} / {meta_path} not found — run "
-            "`python -m rosla_nowcast.emerging.lexicon build` first."
+            "`python -m emerging.lexicon build` first."
         )
     al = pd.read_parquet(lexicon_path)
     meta = pd.read_parquet(meta_path)

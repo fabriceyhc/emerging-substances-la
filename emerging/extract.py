@@ -26,9 +26,9 @@ Three commands:
     validate  -- precision/recall of the extraction against the 8 coded flags
 
 Usage:
-    python -m rosla_nowcast.emerging.extract extract
-    python -m rosla_nowcast.emerging.extract unmatched --top 80
-    python -m rosla_nowcast.emerging.extract validate
+    python -m emerging.extract extract
+    python -m emerging.extract unmatched --top 80
+    python -m emerging.extract validate
 """
 
 from __future__ import annotations

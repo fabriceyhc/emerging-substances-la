@@ -18,12 +18,28 @@ almost always with one specific partner is a marker for that partner's supply.
 
 **Order within CauseA.** The ME writes one combined cause line —
 `EFFECTS OF FENTANYL, METHAMPHETAMINE, AND LIDOCAINE` — and orders it by
-clinical significance, not alphabetically. Fentanyl sits at median relative
-position 0.28 across 2,615 deaths; lidocaine at 0.79 across 34. So the ordinal
-rank of a substance within its own cause line is a usable proxy for how the
-pathologist weighted it. `lead_pct` is how often it is named first;
-`mean_rank_pct` is its average position on a 0 (always first) to 1 (always
-last) scale.
+clinical significance, not alphabetically. Over the last four settled quarters
+fentanyl is named first on 82% of multi-substance lines and last on 9%;
+lidocaine is named first on 0% and last on 82%. So the ordinal rank of a
+substance within its own cause line is a usable proxy for how the pathologist
+weighted it. `lead_pct` is how often it is named first, `last_pct` how often
+it is named last, and `mean_rank_pct` its average position on a 0 (always
+first) to 1 (always last) scale.
+
+**Why position is normalized rather than a mean ordinal.** Line length varies
+with substance type, and a raw mean position conflates "named late" with
+"appears on a long line" — a substance always named last scores 2 on a
+two-substance line and 5 on a five-substance line. That bias runs the wrong
+way for us: adulterants co-occur with more substances, so they sit on longer
+lines, so a raw ordinal would inflate for exactly the class we are trying to
+identify. Ranking all 26 substances both ways gives Spearman 0.79, and the
+disagreements are large — methamphetamine is 20th of 26 on the raw scale and
+7th normalized, because its lines are short so position 2 of 2 is *last*.
+
+`last_pct` is reported alongside because the normalized mean, while the right
+thing to rank on, is hard to read. "0% first, 82% last" states lidocaine's
+case more plainly than 0.93 does. Note that on a two-substance line the
+normalized score can only be 0 or 1, so short lines push it to the extremes.
 
 **A discriminator that was tried and does not work:** which *field* the
 substance was found in. CauseA vs CauseB vs CauseOther looks like it should
@@ -36,9 +52,9 @@ Verdicts are heuristic and stated as such: `principal driver`, `independent`,
 table, not a toxicological finding.
 
 Usage:
-    python -m rosla_nowcast.emerging.polysubstance profile
-    python -m rosla_nowcast.emerging.polysubstance profile --quarters 8 --top 30
-    python -m rosla_nowcast.emerging.polysubstance plot
+    python -m emerging.polysubstance profile
+    python -m emerging.polysubstance profile --quarters 8 --top 30
+    python -m emerging.polysubstance plot
 """
 
 from __future__ import annotations
@@ -184,7 +200,7 @@ def profile_table(
         # multi-substance denominator is what keeps them consistent —
         # methamphetamine led 49% of lines while averaging position 0.75 until
         # this was fixed.
-        leads, rank_pcts = 0, []
+        leads, lasts, rank_pcts = 0, 0, []
         n_ranked = 0
         for c in cases:
             seq = order.get(c, [])
@@ -194,6 +210,8 @@ def profile_table(
             idx = seq.index(sub)
             if idx == 0:
                 leads += 1
+            if idx == len(seq) - 1:
+                lasts += 1
             rank_pcts.append(idx / (len(seq) - 1))
 
         # sort_index() before value_counts() breaks ties by name rather than
@@ -213,6 +231,7 @@ def profile_table(
         alone_pct = 100 * alone / n
         fent_pct = 100 * partners.get("Fentanyl", 0) / n
         lead_pct = 100 * leads / n_ranked if n_ranked else np.nan
+        last_pct = 100 * lasts / n_ranked if n_ranked else np.nan
         mean_rank = float(np.mean(rank_pcts)) if rank_pcts else np.nan
 
         rows.append({
@@ -220,6 +239,7 @@ def profile_table(
             "alone_pct": alone_pct,
             "with_fentanyl_pct": fent_pct,
             "lead_pct": lead_pct,
+            "last_pct": last_pct,
             "mean_rank_pct": mean_rank,
             "n_ranked": n_ranked,
             "verdict": _verdict(alone_pct, lead_pct, mean_rank, fent_pct),
@@ -254,7 +274,7 @@ def profile(
     typer.echo(f"window {q(qs[0])}–{q(qs[-1])}: {len(sets):,} deaths naming "
                f"at least one substance")
     cols = ["n_cases", "alone_pct", "with_fentanyl_pct", "lead_pct",
-            "mean_rank_pct", "verdict"]
+            "last_pct", "mean_rank_pct", "verdict"]
     typer.echo("\n" + prof.head(top)[cols].to_string(
         float_format=lambda v: f"{v:.2f}"))
     typer.echo(f"\nwrote {out_dir / PROFILE_PATH.name}")
@@ -333,9 +353,11 @@ def plot(
     ax2.scatter(r[ok], y[ok], s=64, c=BLUE, edgecolors="white", linewidths=1.2,
                 zorder=4)
     for i in np.where(ok)[0]:
-        ax2.annotate(f"{prof['lead_pct'].iloc[i]:.0f}% first",
-                     (r[i], y[i]), textcoords="offset points", xytext=(9, 0),
-                     fontsize=7.5, color=INK_2, va="center")
+        ax2.annotate(
+            f"{prof['lead_pct'].iloc[i]:.0f}% first · "
+            f"{prof['last_pct'].iloc[i]:.0f}% last",
+            (r[i], y[i]), textcoords="offset points", xytext=(9, 0),
+            fontsize=7.5, color=INK_2, va="center")
     # Verdict in a fixed right-hand column, so it reads as a label on the row
     # rather than as another value on the position scale.
     vcolor = {"principal driver": ORANGE, "independent": AQUA,
@@ -343,11 +365,11 @@ def plot(
               "co-intoxicant": INK_2}
     for i, sub in enumerate(prof.index):
         v = prof.loc[sub, "verdict"]
-        ax2.annotate(v, (1.42, y[i]), fontsize=7.5, color=vcolor[v],
+        ax2.annotate(v, (1.78, y[i]), fontsize=7.5, color=vcolor[v],
                      va="center", annotation_clip=False)
     ax2.set_yticks(y, [""] * len(prof))
     ax2.set_ylim(-0.7, len(prof) - 0.3)
-    ax2.set_xlim(0, 1.42)
+    ax2.set_xlim(0, 1.78)
     ax2.set_xticks([0, 0.5, 1.0],
                    ["named first", "middle", "named last"],
                    fontsize=8, color=INK_2)
