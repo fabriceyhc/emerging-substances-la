@@ -17,6 +17,8 @@ substances rising in LA County overdose deaths.
 | Alias map | `lexicon.py` | 4,089 aliases → 3,127 canonicals |
 | Extraction | `extract.py` | 219 substances, 99.8% decedent coverage, F1 0.962–0.997 vs the ME's own flags |
 | Detection | `trends.py` | GPS/EB05 ranking, as-of backtest, alarm history, watchlist, regime diagnostics |
+| Hierarchy | `tree.py` | 211 substances → 246 testable nodes (NFLIS categories + a pharmacological family layer) |
+| Scan | `treescan.py` | tree-temporal scan, multiplicity-adjusted; head-to-head vs EB05 |
 | Interpretation | `polysubstance.py` | cause-of-death vs passenger verdicts |
 | Localization | `geo.py` | case-control random-labelling permutation test |
 
@@ -28,6 +30,11 @@ substances rising in LA County overdose deaths.
   Alprazolam 1.11, Cocaine 1.06, Lidocaine 1.04.
 - 24 of 205 substances have breached 1.5 at some point across 45 as-of quarters.
 - Credible *declines*: Fentanyl (EB95 0.88), para-Fluorofentanyl (EB95 0.37).
+- **The tree-temporal scan disagrees with the first line above.** After
+  adjusting for all 158 nodes × 6 windows, four nodes clear RI ≥ 100:
+  Lidocaine (RI 1,111), Dissociatives (455), Depressants and Tranquilizers
+  (270), PCP (185). EB05 missed lidocaine only because its burst straddles the
+  fixed 4-quarter boundary. Both hold under either reference series.
 
 **The four findings that changed what we can claim:**
 
@@ -60,31 +67,27 @@ substances are not localized — they track the county-wide fentanyl supply.
 
 Priorities from `LITERATURE_REVIEW.md`. Ordered by expected value, not effort.
 
-### P1 — TreeScan, prospective tree-temporal `not started`
+### P1 — TreeScan, prospective tree-temporal `done 2026-08-10`
 
-The single highest-value change. Replaces one-substance-at-a-time testing with
-a scan over the NFLIS category hierarchy, which is already in the data (23
-categories, fully populated).
+Built as `tree.py` + `treescan.py`; see the entry below for what it showed. Of
+the three things it was supposed to fix, **one delivered, one delivered
+partially, one failed**:
 
-Fixes three things at once:
-- **Aggregation power** — nitazenes are currently "individually too rare to
-  score" and needed a hand-coded family workaround. TreeScan tests the branch.
-- **Multiple testing** — 205 substances × 45 quarters is presently unadjusted.
-- **Repeated looks** — replaces the hand-picked EB05 > 1.5 line with a
-  recurrence interval.
+- **Multiple testing — delivered.** p-values now come from the Monte Carlo
+  distribution of the maximum LLR over 158 nodes × 6 windows, calibrated to
+  within Monte Carlo error. This is the whole return on the work.
+- **Repeated looks — partial.** The recurrence interval covers multiplicity
+  *within* an analysis, not across quarterly looks. The claim below that
+  MaxSPRT is redundant with it was too strong.
+- **Aggregation power — failed.** The nitazene branch never signals (peak LLR
+  3.38, RI 1). Aggregation helps for individually *marginal* members; the
+  nitazenes are individually *absent*.
 
-Steps:
-1. Export a `root → NFLIS category → substance` tree plus quarterly counts in
-   TreeScan's input format.
-2. Run the tree-temporal model with the same as-of discipline as
-   `trends backtest`.
-3. **Head-to-head against EB05 on the five known emergences** — same
-   ground truth, so the comparison is honest. Report detection delay for each.
-4. Decide whether TreeScan replaces EB05 or runs alongside it.
-
-Risk: standalone C++ binary, not a Python library — breaks the pure-Python
-pipeline. Nomenclature lag means a genuinely novel analog may sit uncategorised
-at the root.
+It **runs alongside EB05 rather than replacing it** (step 4 of the original
+plan): at a matched alarm budget it never detects earlier and misses two of the
+five known emergences. The risk noted here — "standalone C++ binary, breaks the
+pure-Python pipeline" — was avoided by implementing the method directly; it is
+~400 lines and runs the full 45-quarter sweep in 2.5 minutes.
 
 ### P2 — SaTScan spatial variation in temporal trends `not started`
 
@@ -121,13 +124,91 @@ qualifies.
 
 ### Explicitly not doing
 
-- **MaxSPRT** — redundant with TreeScan's recurrence interval for our use.
+- **MaxSPRT** — was "redundant with TreeScan's recurrence interval"; that is
+  **only true within a single analysis**, and building P1 made the distinction
+  concrete. The RI does not adjust for looking every quarter. Still not worth
+  doing — the sequential inflation is bounded and we report RI, not a decision
+  — but the reason has changed and the old one was wrong.
 - **LGCP / inlabru** — prior-dominated at n=9–39; revisit only if a single
   substance becomes a funded investigation.
 - **Two-component MGPS** — not identifiable at this scale; documented in
   `_fit_gps_prior`. Revisit on a substance × zip × quarter table.
 - **Spatial methods as *detectors*** — they stay downstream of the temporal
   detector. At n=9 there is nothing to scan.
+
+---
+
+## 2026-08-10 — P1, tree-temporal scan
+
+Implemented the method rather than driving the TreeScan binary, so the pipeline
+stays one language. ~400 lines; the 45-quarter sweep runs in 2.5 minutes.
+
+**Calibration first, because everything else depends on it.** On null data the
+rejection rates are 0.050 / 0.096 / 0.183 / 0.496 against nominal 0.05 / 0.10 /
+0.20 / 0.50. Asserted in `tests/test_treescan.py`, together with the specific
+way it would break silently: applying the `min_cases` floor to the observed
+data but not to the simulations, which would bias the null downward and
+manufacture significance everywhere.
+
+**Positive result: it changes the current answer.** EB05 says nothing clears
+1.5. After adjusting for the entire search, four nodes clear RI ≥ 100 —
+Lidocaine 1,111, Dissociatives 455, Depressants and Tranquilizers 270, PCP 185.
+Lidocaine was missed only because its burst straddles the fixed 4-quarter
+boundary; scanning window length 1–6 finds it at 6q, 31 observed vs 17.4
+expected. PCP corroborates the `geo.py` Skid Row finding on an independent
+axis. Both survive under either reference series, and **cocaine — the EB05
+near-miss that `count_ratio` exposed as a growing share of a shrinking total —
+is nowhere near significant under either.** The scan declines the artifact
+without being told about it.
+
+**Negative result: it does not detect earlier.** EB05 > 1.5 is unadjusted and
+RI ≥ 100 is adjusted for the whole search, so comparing them directly rewards
+whichever is more trigger-happy. The sweep therefore also re-cuts the scan at
+the threshold raising the *same* 85 alarms over the sweep. At that matched
+budget the scan never detects earlier (para-fluorofentanyl +1q, bromazolam
++12q vs 11, carfentanil +29q) and **misses mitragynine and xylazine entirely**
+(leaf peaks RI 48 and 13).
+
+**Negative result: the aggregation argument, which is what motivated P1, did
+not survive.** The nitazene branch never signals — peak LLR 3.38, RI 1.
+Aggregation pools *marginal* members; the nitazenes are *absent*, 1 and 2
+mentions in fourteen years, and no pooling makes signal from three cases.
+Branch-only detection — a branch signalling in a quarter when no member leaf
+did — occurs in **3 node-quarters out of 165** across the whole sweep.
+
+**Defect found and fixed: branch signals are not attributable by default.**
+The first head-to-head reported carfentanil detected at +0q via `Fentanyl and
+Fentanyl-related` in 2017Q2, and para-fluorofentanyl at −18q — a branch
+"detecting" a substance six years before it existed. Two corrections: branch
+signals now require `as_of >= first_seen`, and `excess_share()` reports what
+fraction of the branch's excess the substance actually contributes. That turns
+carfentanil's apparent 0-quarter detection into **1% attributable** (it was
+fentanyl's own explosion) and mitragynine's into ≈0%. Only para-fluorofentanyl
+earns a genuine branch detection, 74% attributable via `Fentanyl analogs`.
+Without this the tree scan manufactures detections for any rare substance
+filed under a large, busy branch.
+
+**The tree turned out to be the hard part, not the statistic.** The plan called
+for `root → NFLIS category → substance` because the field is already populated.
+The NFLIS categories are a forensic-chemistry filing system: `Depressants and
+Tranquilizers` puts PCP (724) beside xylazine (9), `Narcotic Analgesics` puts
+morphine (1,124) beside the nitazenes (3), and `Other substances` is a
+71-member junk drawer holding lidocaine and levamisole next to atorvastatin.
+Aggregating the nitazenes to their NFLIS parent *loses* the signal. So
+`tree.py` keeps the categories and adds a pharmacological family layer beside
+them. Families cross category boundaries, which makes it a **DAG, not a tree** —
+fine, because the LLR is per node and the Monte Carlo maximum absorbs the
+overlap; the strict-tree requirement belongs to TreeScan's implementation, not
+to the method.
+
+*Recorded so it is not re-litigated:* `Veterinary sedatives` collapses to
+`{Xylazine}` and is dropped as a duplicate of the leaf, because medetomidine
+and dexmedetomidine are absent from LA. Absent members stay in the constant on
+purpose — the branch then already exists in the quarter one is first coded.
+
+*Also worth knowing:* `Fentanyl and Fentanyl-related` is in signal in 29 of 45
+quarters and `Fentanyl` in 28. A node that is almost always in alarm carries no
+information; the fentanyl branches should be read as background, not events.
 
 ---
 

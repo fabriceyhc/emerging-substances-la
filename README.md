@@ -25,6 +25,11 @@ python -m emerging.trends       alarms    # every breach, ever  (run before plot
 python -m emerging.trends       watch     # national watchlist vs LA
 python -m emerging.trends       regime    # recording artifacts that move EB05
 python -m emerging.trends       plot      # five figures
+python -m emerging.tree         show      # the hierarchy the scan runs over
+python -m emerging.tree         check     # family members absent from LA
+python -m emerging.treescan     scan      # tree-temporal scan, current quarter
+python -m emerging.treescan     backtest  # as-of sweep + head-to-head vs EB05
+python -m emerging.treescan     plot
 python -m emerging.polysubstance profile  # cause vs passenger
 python -m emerging.polysubstance plot
 python -m emerging.geo          cluster   # is it localized?
@@ -41,6 +46,8 @@ sweep.
 | `lexicon.py` | 4,089 aliases → 3,127 canonicals from the DEA NFLIS catalog + a curated supplement (ethanol, ME misspellings, metabolite/isomer rollups) |
 | `extract.py` | greedy longest-n-gram matcher over the narrative fields, with an audited fuzzy fallback for ME typos |
 | `trends.py` | gamma-Poisson empirical-Bayes ranking, as-of backtest, alarm history, watchlist, recording diagnostics, figures |
+| `tree.py` | the substance hierarchy — NFLIS categories plus a pharmacological family layer; **the domain-knowledge core**, a scan can only find branches this file encodes |
+| `treescan.py` | tree-temporal scan statistic: every node × every recent window, with a Monte Carlo p-value adjusted for the whole search |
 | `polysubstance.py` | is a flagged substance a cause of death or a passenger — co-occurrence plus position on the ME's cause line |
 | `geo.py` | case-control permutation test for spatial localization against the overdose-death background |
 
@@ -195,6 +202,123 @@ adulterant-attaching-to-the-hub pattern. What the table shows is that a
 Practical rule: for any spiky trajectory, quote the `backtest` peak alongside
 the current value. A single-window EB05 will under- or over-state a burst
 depending on where the boundary lands.
+
+## Scanning the hierarchy instead of one substance at a time
+
+`treescan.py` implements a tree-temporal scan statistic over the substance
+hierarchy in `tree.py`: every node — leaf, pharmacological family, NFLIS
+category, superclass, root — against every trailing window of 1–6 quarters
+inside the same 12-quarter frame EB05 uses. The p-value comes from the Monte
+Carlo distribution of the **maximum** log-likelihood ratio over the whole
+search, so it is already adjusted for all 158 nodes × 6 windows. Reported as a
+recurrence interval: RI 100 means a signal this strong turns up in one scan in
+100 by chance.
+
+It removes the two choices the section above just showed to be load-bearing —
+which window, and which of 205 substances you looked at — and the multiplicity
+correction charges for having made them.
+
+**It changes the current answer.** EB05 says nothing clears 1.5. The scan,
+after full adjustment, says four nodes do:
+
+| Node | Level | Window | Observed | Expected | RI |
+|---|---|---|---|---|---|
+| Lidocaine | substance | 6q | 31 | 17.4 | 1,111 |
+| Dissociatives | family | 5q | 203 | 158.3 | 455 |
+| Depressants and Tranquilizers | category | 5q | 225 | 178.4 | 270 |
+| PCP | substance | 5q | 174 | 134.5 | 185 |
+
+Lidocaine's burst is real; EB05 missed it only because the burst straddles the
+4-quarter boundary. PCP corroborates the spatial finding from `geo.py` on an
+independent axis. Both hold under either reference series (`--reference
+deaths`, the EB05 analogue, and `--reference mentions`, which is immune to
+panel drift) — and cocaine, the EB05 near-miss that `count_ratio` exposed as a
+growing share of a shrinking total, is nowhere near significant under either.
+
+### But it does not detect earlier than EB05, and the aggregation argument failed
+
+`treescan backtest` runs the same as-of sweep as `trends backtest` on the same
+ground truth, so the only thing that differs is the statistic. EB05 > 1.5 is
+unadjusted while RI ≥ 100 is adjusted for the entire search, so the sweep also
+re-cuts the scan at the threshold that raises **the same number of alarms** —
+85 over the sweep — and that matched-budget column is the fair comparison.
+
+| Substance | First seen | EB05 | Leaf, RI ≥ 100 | Leaf @ matched budget |
+|---|---|---|---|---|
+| para-Fluorofentanyl | 2021Q1 | +1q | **+0q** | +1q |
+| Bromazolam | 2021Q2 | **+11q** | +11q | +12q |
+| Carfentanil | 2017Q2 | +29q | +29q | +29q |
+| Mitragynine | 2017Q4 | **+20q** | never (peak RI 48) | never |
+| Xylazine | 2023Q3 | **+4q** | never (peak RI 13) | never |
+
+At a matched false-alarm budget the tree scan never detects earlier, and it
+misses two of five outright. **EB05's apparent advantage on mitragynine and
+xylazine is bought with an unadjusted threshold** — but the scan does not buy
+anything back with its adjustment either.
+
+Two further negative results worth recording:
+
+- **The aggregation-power argument, which is what motivated the whole thing,
+  did not survive contact with the data.** The nitazene branch never signals:
+  peak LLR 3.38, RI 1. Aggregation helps when members are individually
+  *marginal*; the nitazenes are individually *absent* (1 and 2 mentions in
+  fourteen years), and no amount of pooling creates signal from three cases.
+  Across the whole sweep, branch-only detection — a branch signalling in a
+  quarter when no member leaf did — happens in **3 node-quarters out of 165**.
+- **Branch signals are not attributable by default.** `Fentanyl and
+  Fentanyl-related` fires in 2017Q2, the exact quarter carfentanil first
+  appears in LA, which scores as a 0-quarter detection until you ask how much
+  of the branch's excess carfentanil actually contributes: **1%**. It was
+  fentanyl's own explosion. `excess_share()` computes this and the head-to-head
+  reports it, because without it a large branch containing a rare substance
+  manufactures detections. Only para-fluorofentanyl gets a genuine branch
+  detection (74% attributable, via `Fentanyl analogs`).
+
+**Verdict: it runs alongside EB05, it does not replace it.** What it adds is
+multiplicity-honest inference and window-free detection, which is exactly what
+promoted lidocaine and PCP from "below the line" to "signal". What it does not
+add is earlier warning.
+
+### The tree is where the findings are made or lost
+
+The game plan called for `root → NFLIS category → substance`, on the grounds
+that the category field is already in the data. Building it showed the NFLIS
+categories are a forensic-chemistry filing system, not a pharmacological one:
+
+- `Depressants and Tranquilizers` holds PCP (724 mentions) next to xylazine (9)
+  and zolpidem — PCP is 60% of the node, so any tranq signal drowns.
+- `Narcotic Analgesics` mixes morphine (1,124) with the nitazenes (3 total).
+  The family that motivated a tree scan is 0.1% of its own parent, so
+  aggregating to the NFLIS parent *loses* the signal rather than pooling it.
+- `Other substances` is a 71-member junk drawer holding lidocaine and
+  levamisole alongside atorvastatin and vancomycin.
+
+So `tree.py` keeps the NFLIS categories — they are the published taxonomy and a
+reader can check them — and adds a family layer beside them. Families cross
+category boundaries, which makes the structure a **DAG rather than a tree**;
+nothing in the statistic requires otherwise, since the LLR is computed per node
+and the Monte Carlo maximum absorbs however much the nodes overlap. Nodes whose
+leaf set duplicates another's are dropped, keeping the more specific label.
+
+`python -m emerging.tree check` lists every family member absent from LA, so
+the constant stays a claim about pharmacology rather than a wish list. Absent
+members are kept on purpose: medetomidine is in `Veterinary sedatives` today,
+so the branch already exists the quarter it is first coded.
+
+### Calibration
+
+The scan produces p-values, so the property that matters is that they mean what
+they say. On null data — every leaf's cases distributed over time exactly as
+the reference series says — the observed rejection rates are 0.050, 0.096,
+0.183 and 0.496 against nominal 0.05, 0.10, 0.20 and 0.50. `tests/
+test_treescan.py::test_null_calibration` asserts this, along with the specific
+way it would break quietly: applying the `min_cases` floor to the observed data
+but not to the simulations.
+
+**One thing the recurrence interval does not cover: repeated looks.** It is the
+multiplicity across nodes and windows *within one analysis*. Running the scan
+every quarter is a further multiplicity, and the game plan's claim that
+TreeScan's RI makes MaxSPRT redundant is only true of the within-analysis part.
 
 ## How the expected count is computed
 
