@@ -22,6 +22,8 @@ substances rising in LA County overdose deaths.
 | Interpretation | `polysubstance.py` | cause-of-death vs passenger verdicts |
 | Localization | `geo.py` | case-control random-labelling permutation test |
 | Space-time | `spacetime.py` | Bernoulli + space-time-permutation scan over zip circles x recent quarters |
+| Denominator | `census.py` | ACS resident population, 301 LA zips x 2013–2024 |
+| Trend scan | `svtt.py` | spatial variation in temporal trends — where a *slope* differs from the county |
 
 **Headline results, settled window (recent 2025Q1–Q4 vs baseline 2023Q1–2024Q4;
 2,153 vs 5,491 OD deaths):**
@@ -66,6 +68,15 @@ scan sharpens this: **five substances are credibly concentrated somewhere
 and tranquilizers, and cutting agents 3.42×), and none is credibly growing
 anywhere** after correcting for the 46 scanned. The geography is real and it is
 static.
+
+**The one place that is changing** turns up only once a population denominator
+is used and the test is on the *slope* rather than the level: against a county
+falling at 9.3%/yr, the **Pomona Valley (91765, 91766, 91768, 91748, 91789) is
+rising at 25.2%/yr**, p = 0.016 adjusted for all 23,406 circles. It started at
+a third of the county rate and has converged upward, so it is a catch-up rather
+than a new epicentre — and invisible to any level-based scan. Read the caveats
+in the P7 entry before quoting it: the rise is concentrated in 2024, and the
+cluster *boundary* is not stable to dropping 2025 even though the region is.
 
 ### How EB05 and the tree scan divide the work
 
@@ -194,7 +205,14 @@ qualifies.
 
 ### P5 — READUS-PV reporting conventions in the manuscript `not started`
 
-### P7 — spatial variation in temporal trends, on a real denominator `next`
+### P7 — spatial variation in temporal trends, on a real denominator `done 2026-08-11`
+
+Built as `census.py` + `svtt.py`; see the entry below. **The first
+population-denominated finding the project has produced:** against a county
+falling at −9.3%/yr, the Pomona Valley is rising at +25.2%/yr, p = 0.016
+adjusted for all 23,406 circles.
+
+Original notes, kept because the caveats still bind:
 
 Unblocked 2026-08-11 by `census.py`. Every method in this repository so far is
 **compositional** — what share of overdose deaths names a substance — because
@@ -281,6 +299,71 @@ distribution.
   `_fit_gps_prior`. Revisit on a substance × zip × quarter table.
 - **Spatial methods as *detectors*** — they stay downstream of the temporal
   detector. At n=9 there is nothing to scan.
+
+---
+
+## 2026-08-11 — P7, spatial variation in temporal trends
+
+`svtt.py`, on the denominator `census.py` unlocked. Every other scan here asks
+where a *level* is unusual; this asks where a *slope* is. Each circle keeps its
+own baseline rate and is tested only on its trend, so "this area has always
+been bad" cannot signal — which is the objection that made `geo.py`
+case-control in the first place, now handled inside the model rather than by
+avoiding the denominator.
+
+The MLE of a log-linear Poisson with a population offset reduces to a
+one-dimensional monotone root find: the population-weighted mean time under
+trend *b* must equal the case-weighted mean time. Its derivative is a variance,
+so the root is unique and Newton converges from anywhere, which is what makes
+23,406 circles affordable without a GLM per circle.
+
+**Caught on the first run: the window was misspecified.** With the whole
+2015–2025 series the county trend came out at **+14.5%/yr**. LA's overdose rate
+is a hump, not a trend — 5.3 per 100k in 2013, peaking at 29.5 in 2022, down to
+21.7 in 2025 — so a log-linear fit across all of it describes neither phase,
+and "rising fastest" would have conflated *rose earliest during the ramp* with
+*still rising now*. The default is now the decline phase (2022–2025, county
+−9.3%/yr, monotone), and `scan` prints the annual rate series it fitted so this
+cannot recur silently.
+
+**The finding.** A cluster of 5 zips — 91765 Diamond Bar, 91766/91768 Pomona,
+91748 Rowland Heights, 91789 Walnut — rising **+25.2%/yr while the county
+falls 9.8%/yr**. p = 0.016, adjusted for every circle searched. Verified by
+hand, independent of the scan code:
+
+| Year | Cluster /100k | Rest of county |
+|---|---|---|
+| 2022 | 11.5 | 30.0 |
+| 2023 | 12.5 | 28.8 |
+| 2024 | 23.0 | 26.3 |
+| 2025 | 20.4 | 21.7 |
+
+**It is a catch-up, not a new epicentre.** The cluster started at a third of
+the county rate and converged upward; it is still slightly *below* county
+average in level. A level-based scan — including a population-denominated one
+— would miss it completely, which is exactly the case SVTT exists for and the
+reason P7 was worth doing rather than just computing rates.
+
+*Three things to say alongside it, not after being asked:*
+- **The rise is a single year.** 2023→2024 is the whole step; 2025 falls back.
+  A log-linear slope summarises that shape, it does not describe it. Quote the
+  table, not just the +25%.
+- **The boundary is not stable.** Dropping 2025 moves the top cluster from
+  this tight 5-zip core to a broad 58-zip eastern-county region (+7.9% vs
+  −7.9%, LLR 8.50 against 10.15). Every Pomona zip is inside both, so the
+  *region* is robust and the *extent* is not. Report "eastern San Gabriel /
+  Pomona Valley", not five zipcodes.
+- **156 deaths.** Enough for a slope, not enough to subdivide.
+
+*Calibration.* `tests/test_svtt.py` checks the trend MLE against the score
+equation it claims to solve and against a planted slope, that the LLR is
+exactly zero when two circles share a slope but differ 10× in level, that it is
+one-sided, and that a planted cluster is recovered. The calibration test runs
+the null with a deliberate **5× spread in baseline level across zips** — a
+level-based scan would light up on that, and SVTT must not. 8 tests pass.
+
+*Not yet done:* per-substance SVTT. The county-wide run was the high-value one
+and it is the one with the counts to support a slope.
 
 ---
 
