@@ -280,6 +280,21 @@ multiplicity-honest inference and window-free detection, which is exactly what
 promoted lidocaine and PCP from "below the line" to "signal". What it does not
 add is earlier warning.
 
+### Reading the two together
+
+EB05 *estimates* and the scan *tests*, so they answer different questions and
+only EB05 can rank (p-values tie at 1.0 for half the catalog) or detect
+declines (the scan is high-rate only). EB05 screens, the scan adjudicates:
+
+| | RI ≥ 100 | RI < 100 |
+|---|---|---|
+| **EB05 > 1.5** | a real signal, defensible to a reviewer | a candidate to watch, not publish — where EB05's unadjusted threshold was doing the work (xylazine, mitragynine) |
+| **EB05 < 1.5** | EB05's fixed window missed it (lidocaine, PCP) | nothing |
+
+Both off-diagonal cells are new information. The bottom-left one is the
+current headline: `trends rank` says nothing clears 1.5, and lidocaine and PCP
+contradict it.
+
 ### The tree is where the findings are made or lost
 
 The game plan called for `root → NFLIS category → substance`, on the grounds

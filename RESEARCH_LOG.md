@@ -61,6 +61,64 @@ substances rising in LA County overdose deaths.
 background, p=0.005, n=367, anchored on 90013 (Skid Row). The flagged *novel*
 substances are not localized — they track the county-wide fentanyl supply.
 
+### How EB05 and the tree scan divide the work
+
+Read this before quoting either one. They are **complementary, but not in the
+direction the game plan assumed** — P1 was written expecting the scan to be a
+better detector. It is not. It is a better adjudicator.
+
+| | EB05 | Tree scan |
+|---|---|---|
+| Detects earlier (matched 85-alarm budget) | — | never |
+| Known emergences found | 5/5 | 3/5 |
+| Effect size with a credible interval | yes | no |
+| Detects credible *declines* | yes | no |
+| Multiplicity-adjusted | no | yes |
+| Free of a window choice | no | yes |
+| Can test a family | no | yes |
+| Cost of a 45-quarter sweep | ~1 s | ~2.5 min |
+
+**What only EB05 can do.** It *estimates*; the scan only *tests*. EBGM with
+EB05/EB95 is a shrunken effect size with an interval, so 205 substances can be
+ranked; p-values cannot rank, because half of them tie at 1.0. EB95 < 1 is the
+only way we detect declines (fentanyl 0.88, para-fluorofentanyl 0.37) — the
+scan is high-rate only. And it stays sensitive at the counts that matter:
+xylazine reaching rank 4 on n=6 is the headline EB05 result, where the scan
+peaks at RI 13.
+
+**What only the scan can do.** Adjust for having looked at 205 substances × 45
+quarters. Search window length, which the log already shows is load-bearing
+(lidocaine reads 1.04 / 2.20 / 4.29 depending on where the 4-quarter boundary
+falls). Test a branch. And decline the shrinking-denominator artifact
+unprompted — cocaine is non-significant under both reference series without
+being told about `count_ratio`.
+
+**Why neither wins, and what that means.** This lands where the signal-ceiling
+work already did: three of the five known emergences sit at n < 10, where
+Poisson noise and not the estimator is binding. Family-wise error control costs
+exactly the power needed for a substance with nine deaths. The scan does not
+lower that ceiling — it makes it visible. Its real contribution is honesty
+about how much of EB05's sensitivity is bought with an uncontrolled
+false-positive rate.
+
+**Operating procedure: EB05 screens and ranks, the scan adjudicates.** Report
+the pair, and read the three cells:
+
+| | RI ≥ 100 | RI < 100 |
+|---|---|---|
+| **EB05 > 1.5** | a real signal; defensible to a reviewer | a candidate to watch, not to publish — this is where EB05's unadjusted threshold was quietly doing the work (xylazine, mitragynine) |
+| **EB05 < 1.5** | EB05's fixed window missed it (lidocaine, PCP) | nothing |
+
+The two off-diagonal cells are the new information, and the bottom-left one
+matters most right now: the current headline is "nothing clears the line",
+and lidocaine and PCP contradict it.
+
+*Correction to an earlier framing in this log:* the scan raising 165
+node-quarter alarms against EB05's 85 was reported as "twice the noise for no
+detection gain". True at RI ≥ 100, but that is a threshold choice, not a
+property of the method — at a matched budget it is 11 nodes. The finding that
+survives is the first row of the table above: never earlier, and 3 of 5.
+
 ---
 
 ## Game plan
@@ -85,9 +143,12 @@ partially, one failed**:
 
 It **runs alongside EB05 rather than replacing it** (step 4 of the original
 plan): at a matched alarm budget it never detects earlier and misses two of the
-five known emergences. The risk noted here — "standalone C++ binary, breaks the
-pure-Python pipeline" — was avoided by implementing the method directly; it is
-~400 lines and runs the full 45-quarter sweep in 2.5 minutes.
+five known emergences. EB05 screens and ranks, the scan adjudicates — see "How
+EB05 and the tree scan divide the work" above for the operating procedure and
+the three-cell rule for reading them together. The risk noted here — "standalone
+C++ binary, breaks the pure-Python pipeline" — was avoided by implementing the
+method directly; it is ~400 lines and runs the full 45-quarter sweep in 2.5
+minutes, and has since been validated against that binary.
 
 ### P2 — SaTScan spatial variation in temporal trends `not started`
 
