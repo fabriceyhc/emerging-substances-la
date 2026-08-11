@@ -21,6 +21,7 @@ substances rising in LA County overdose deaths.
 | Scan | `treescan.py` | tree-temporal scan, multiplicity-adjusted; head-to-head vs EB05 — **validated against the TreeScan C++ binary, LLRs identical to 5e-07** |
 | Interpretation | `polysubstance.py` | cause-of-death vs passenger verdicts |
 | Localization | `geo.py` | case-control random-labelling permutation test |
+| Space-time | `spacetime.py` | Bernoulli + space-time-permutation scan over zip circles x recent quarters |
 
 **Headline results, settled window (recent 2025Q1–Q4 vs baseline 2023Q1–2024Q4;
 2,153 vs 5,491 OD deaths):**
@@ -57,9 +58,14 @@ substances rising in LA County overdose deaths.
    cannot be resolved from this data: an assay the ME does not run produces an
    identical zero.
 
-**One substantive spatial finding:** PCP, 1.38× tighter than the overdose
-background, p=0.005, n=367, anchored on 90013 (Skid Row). The flagged *novel*
-substances are not localized — they track the county-wide fentanyl supply.
+**Spatial findings.** PCP is 1.38× tighter than the overdose background
+(p=0.005, n=367, anchored on 90013, Skid Row); the flagged *novel* substances
+are not localized — they track the county-wide fentanyl supply. The space-time
+scan sharpens this: **five substances are credibly concentrated somewhere
+(cocaine 2.07× in South LA, PCP 2.81× around Watts, dissociatives, depressants
+and tranquilizers, and cutting agents 3.42×), and none is credibly growing
+anywhere** after correcting for the 46 scanned. The geography is real and it is
+static.
 
 ### How EB05 and the tree scan divide the work
 
@@ -150,12 +156,22 @@ C++ binary, breaks the pure-Python pipeline" — was avoided by implementing the
 method directly; it is ~400 lines and runs the full 45-quarter sweep in 2.5
 minutes, and has since been validated against that binary.
 
-### P2 — SaTScan spatial variation in temporal trends `not started`
+### P2 — space-time scan `done 2026-08-11`
 
-Answers *where is it growing*, which is the question the project actually asks;
-`geo.py` only answers *where is it concentrated*. Fuses the temporal and
-spatial tests into one statistic. The space-time permutation variant needs no
-population denominator, which matches our constraint exactly.
+Built as `spacetime.py`; see the entry below. **Answered, and the answer is
+no.** Five substances are strongly and credibly *concentrated* somewhere;
+**none is credibly growing anywhere**. The distinction only exists because the
+first model could not draw it — see the log entry for why a second one was
+needed.
+
+Neither of the two methods named here was the right one. Spatial variation in
+temporal trends needs a population denominator per zip per quarter, which is
+the thing this project has never had. The space-time permutation applied to a
+substance's own case series is the *growth* test and was built, but as the
+secondary model, because on its own it mostly rediscovers where overdose
+deaths are. The primary is a Bernoulli case-control space-time scan, which
+keeps the denominator as overdose death itself and so stays commensurable with
+EB05, `treescan.py` and `geo.py`.
 
 ### P3 — Delay-distribution nowcast `not started`
 
@@ -225,6 +241,74 @@ distribution.
   `_fit_gps_prior`. Revisit on a substance × zip × quarter table.
 - **Spatial methods as *detectors*** — they stay downstream of the temporal
   detector. At n=9 there is nothing to scan.
+
+---
+
+## 2026-08-11 — P2, space-time scan
+
+`spacetime.py`. Circles of zipcodes crossed with trailing quarters; 7,572 OD
+deaths, 280 zips, 12 quarters (2023Q1–2025Q4); circles capped at 25% of deaths
+(≤ 97 zips), windows 1–6q, 999 replicates. 46 of 157 substances and tree
+branches were eligible (≥ 20 cases, ≤ 25% of all deaths).
+
+**Two models, because the obvious one cannot answer the question P2 asked.**
+The Bernoulli case-control scan — cases are deaths naming the substance,
+controls are the other OD deaths in the same zip and quarter — measures the
+substance's share against its share pooled over the *whole* study period. A
+concentration that has been there for a decade therefore wins as easily as one
+that appeared last year. It flagged cocaine at 2.07× over a 5-quarter window in
+South LA, which reads as an emerging hotspot and is not one. So the second
+model is Kulldorff's space-time permutation, conditioned on the substance's own
+spatial margin *and* its own temporal margin: a busy zip cannot win, a busy
+quarter cannot win, only the interaction can. That is "growing here" as opposed
+to "concentrated here".
+
+**The result is a clean split.**
+
+| | concentrated (Bernoulli) | growing (interaction) |
+|---|---|---|
+| p ≤ 0.05 | 21 of 46 | 1 of 46 |
+| survives Bonferroni across the 46 | **5** | **0** |
+
+The five: Cocaine 2.07× (137 vs 66.1, 12 zips around 90011, 5q), PCP 2.81×
+(68 vs 24.2, 37 zips around 90002, 4q), Dissociatives 2.25×, Depressants and
+Tranquilizers 2.12×, and Cutting agents and adulterants 3.42× (22 vs 6.4, 42
+zips around 90043, 6q). **The spatial structure of the LA supply is real and
+strong, but static — these substances have a geography, not a moving front.**
+PCP corroborates `geo.py` on an independent statistic, and the adulterant
+family is the spatial echo of the lidocaine finding.
+
+*Had only the Bernoulli model been built, this entry would have claimed the
+opposite.* That is the transferable lesson: with trailing windows, "recent
+elevation" and "long-standing concentration" are the same picture unless you
+condition them apart.
+
+**Multiplicity, again.** Each p-value is adjusted for every cylinder searched
+*within* a substance, and not at all for having scanned 46 of them. Reported
+per-substance, the interaction model has a hit — diphenhydramine, p = 0.003,
+4 deaths against 0.44 expected across the affluent Westside (90024, 90049,
+90210, 90272 …) over 3 quarters. Corrected across the 46, it is 0.138. It is
+not a facility artifact (11% of its deaths at shared addresses, against 15%
+county-wide), and it is not a finding either. `p_across_substances` is now a
+column so nobody has to remember this.
+
+*Two defects found and fixed while building:*
+- The observed grid was built with `np.add.at` and the simulated grids with
+  `np.bincount`. They agreed, but only by luck of construction — if they had
+  not, the p-values would have been wrong with nothing failing. Now asserted.
+- The reported member-zip list was truncated to 12, so the map drew a 12-zip
+  blob for a 69-zip cluster. The statistics were right; the picture was not.
+
+*Also recorded:* methamphetamine (61% of deaths), fentanyl (58%) and their
+parent nodes are withheld by the same `MAX_CASE_FRACTION` guard as in
+`geo.py` — 111 of 157 nodes were skipped, most for having too few cases.
+
+*Calibration.* Synthetic nulls for both models are in
+`tests/test_spacetime.py`, along with a planted-cluster recovery test. On the
+real background, rejection rates are 0.075 / 0.113 at nominal 0.05 / 0.10 for
+C=40 and 0.037 / 0.087 for C=400 — within Monte Carlo error at the thresholds
+that matter (80 replicate datasets, so sd ≈ 0.024 and 0.034). The body of the
+distribution runs mildly conservative, which errs toward under-claiming.
 
 ---
 
