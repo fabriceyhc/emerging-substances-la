@@ -37,6 +37,8 @@ python -m emerging.geo          cluster   # is it localized?
 python -m emerging.geo          plot
 python -m emerging.spacetime    scan      # where, and is it growing there?
 python -m emerging.spacetime    plot
+python -m emerging.census       fetch     # ACS population per zip per year
+python -m emerging.census       show
 ```
 
 `alarms` must run before `plot`: it writes `alarm_history.csv` and
@@ -55,6 +57,7 @@ sweep.
 | `polysubstance.py` | is a flagged substance a cause of death or a passenger — co-occurrence plus position on the ME's cause line |
 | `geo.py` | case-control permutation test for spatial localization against the overdose-death background |
 | `spacetime.py` | space-time scan over circles of zipcodes x recent quarters — separates "over-represented here" from "growing here" |
+| `census.py` | ACS resident population per zip per year — the denominator the rest of the pipeline deliberately did without |
 | `cohort.py` | overdose-death cohort definition — **a vendored copy**, see below |
 | `paths.py` | where the data lives |
 
@@ -72,6 +75,7 @@ All commands are run from the repository root. Paths are fixed (`emerging/paths.
 | `data/processed/` | **no** | one row per decedent per substance; regenerate in ~1 min |
 | `data/raw/nflis/` | yes | DEA NFLIS catalog, public |
 | `data/raw/_geo/` | yes | LA County zipcode boundaries, public |
+| `data/raw/census/` | yes | ACS population per zip per year, public aggregate |
 | `results/` | yes | aggregate only — no case numbers, no coordinates |
 
 **Do not add `.gitignore` exceptions for the first two.** Regenerate the

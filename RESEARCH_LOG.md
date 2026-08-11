@@ -164,14 +164,20 @@ no.** Five substances are strongly and credibly *concentrated* somewhere;
 first model could not draw it — see the log entry for why a second one was
 needed.
 
-Neither of the two methods named here was the right one. Spatial variation in
-temporal trends needs a population denominator per zip per quarter, which is
-the thing this project has never had. The space-time permutation applied to a
-substance's own case series is the *growth* test and was built, but as the
-secondary model, because on its own it mostly rediscovers where overdose
-deaths are. The primary is a Bernoulli case-control space-time scan, which
-keeps the denominator as overdose death itself and so stays commensurable with
-EB05, `treescan.py` and `geo.py`.
+The space-time permutation applied to a substance's own case series is the
+*growth* test and was built, but as the secondary model, because on its own it
+mostly rediscovers where overdose deaths are. The primary is a Bernoulli
+case-control space-time scan, which keeps the denominator as overdose death
+itself and so stays commensurable with EB05, `treescan.py` and `geo.py`.
+
+**Correction, 2026-08-11.** This entry originally also ruled out spatial
+variation in temporal trends on the grounds that it "needs a population
+denominator per zip per quarter, which is the thing this project has never
+had". **That was wrong.** ACS `B01001_001E` is public and free, and
+`predict_rosla/rosla_nowcast/data_prep/acs_ingest.py` was already fetching it
+and discarding it in `_derive`. `census.py` now keeps it: 301 LA zips x
+2013–2024, and **every one of the 280 zips holding deaths has a population**.
+SVTT is therefore back on the table — see P7.
 
 ### P3 — Delay-distribution nowcast `not started`
 
@@ -187,6 +193,40 @@ n=367 clears the n ≥ 50–100 threshold that ruled kernel methods out. Turns
 qualifies.
 
 ### P5 — READUS-PV reporting conventions in the manuscript `not started`
+
+### P7 — spatial variation in temporal trends, on a real denominator `next`
+
+Unblocked 2026-08-11 by `census.py`. Every method in this repository so far is
+**compositional** — what share of overdose deaths names a substance — because
+the ME extract carries no denominator. With population per zip per year, two
+things become possible that were not:
+
+1. **Rates.** "N deaths per 100,000 residents" is the sentence every reviewer
+   and every health officer asks for, and nothing here can currently say it.
+2. **SVTT** (Kulldorff 2006): fit a log-linear Poisson trend inside and
+   outside each circle and scan for where the *trend* differs. Unlike a
+   level-based scan it is not confounded by where overdose mortality is
+   simply high, which is the objection that made `geo.py` case-control in the
+   first place.
+
+The single highest-value run is **all overdose deaths, not per substance**:
+"where in LA County is overdose mortality rising fastest per capita" is
+directly actionable and nothing in the pipeline answers it. Per-substance SVTT
+is a follow-on for the handful with enough counts.
+
+Cost estimate: the MLE for a log-linear Poisson trend reduces to a
+one-dimensional monotone root find, so it vectorises across all ~27k circles
+at once; ~20 Newton iterations per replicate. Feasible, but it is real work
+and needs the same calibration discipline as P1 and P2.
+
+Caveats to carry into the results, all recorded in `census.py`: ACS 5-year
+estimates are already smoothed and lag fast change (Skid Row is the case to
+worry about); the series ends in 2024 so 2025 is carried forward; ZCTAs spill
+across the county line, which is why the total reads 10.1M against the
+county's ~9.7M; and **residential population is the wrong denominator for a
+place people travel to** — 90013 has 14,891 residents and a daytime
+population several times that, so a per-resident rate there is an
+overestimate of individual risk and should be read as place-based intensity.
 
 ### P6 — release the scan as a Python package `deferred 2026-08-11`
 
