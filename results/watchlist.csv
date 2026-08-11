@@ -1,11 +1,11 @@
 watch,note,n_total,first_seen,last_seen,n_recent,eb05_max,has_fired
-Xylazine,"'tranq' — fentanyl adulterant, widespread in the Northeast",9,2023-07-01,2025-01-01,2,0.4749196807665575,True
+Xylazine,"'tranq' — fentanyl adulterant, widespread in the Northeast",9,2023-07-01,2025-01-01,2,0.4750137982965451,True
 Medetomidine,"vet sedative displacing xylazine in East Coast fentanyl, 2024-",0,,,0,,False
 Dexmedetomidine,"medetomidine isomer, same supply signal",0,,,0,,False
 "BTMPS (Bis(2,2,6,6-tetramethyl-4-piperidinyl) Sebacate)",industrial plastics stabiliser found in fentanyl from mid-2024,0,,,0,,False
-Tianeptine,"'gas-station heroin', unscheduled atypical opioid",1,2020-04-01,2020-04-01,0,0.4595463458645516,False
-Bromazolam,"designer benzo, the successor to etizolam/flualprazolam",35,2021-04-01,2025-10-01,7,0.4887028347041047,True
-Carfentanil,resurgent 2023- after a near-decade absence,23,2017-04-01,2025-10-01,10,0.9014064526378452,True
-Levamisole,long-standing cocaine adulterant,12,2021-10-01,2025-10-01,2,0.5140981797058596,True
+Tianeptine,"'gas-station heroin', unscheduled atypical opioid",1,2020-04-01,2020-04-01,0,0.4596385253162766,False
+Bromazolam,"designer benzo, the successor to etizolam/flualprazolam",35,2021-04-01,2025-10-01,7,0.4887981302781326,True
+Carfentanil,resurgent 2023- after a near-decade absence,23,2017-04-01,2025-10-01,10,0.9015383117802553,True
+Levamisole,long-standing cocaine adulterant,12,2021-10-01,2025-10-01,2,0.5141948038073103,True
 Desomorphine,"'krokodil' — recurrent media claim, rarely confirmed",0,,,0,,False
-[family] nitazenes (2 analogs),"novel synthetic opioids, individually too rare to score",3,2023-07-01,2024-04-01,0,0.43684585386048985,False
+[family] nitazenes (2 analogs),"novel synthetic opioids, individually too rare to score",3,2023-07-01,2024-04-01,0,0.4369371280566058,False

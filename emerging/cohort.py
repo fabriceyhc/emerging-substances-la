@@ -54,14 +54,25 @@ _ACUTE_INTOX_RE = re.compile(
 _CHRONIC_LIVER_RE = re.compile(
     "cirrhos|laennec|laënnec|fatty liver|steato|hepat|pancreat|"
     "chronic.{0,15}(?:alcohol|ethanol|liver)|alcoholic liver|liver failure|"
-    "esophageal var|portal hypertension|ascites|end.stage liver|sequelae of "
+    "esophageal var|portal hypertension|ascites|end.stage liver|"
+    "sequelae of (?:hepatic|liver)|alcohol use disorder|alcohol abuse"
 )
+# Verify against upstream rather than trusting the eye:
+#   from rosla_nowcast.modeling.zipcode.monthly.signal_check import ccf
+#   assert ccf._CHRONIC_LIVER_RE.pattern == _CHRONIC_LIVER_RE.pattern
+# The first vendoring of this pattern was transcribed from a truncated
+# terminal `repr()` and silently ended at "sequelae of ", dropping the
+# hepatic/liver qualifier and the two alcohol-use-disorder alternatives. That
+# moved 6 deaths across the cohort boundary and shifted every downstream
+# denominator. It failed no test and raised no error — which is the whole
+# argument for diffing this file against upstream before publishing.
 
 
 def _norm_zip(s: pd.Series) -> pd.Series:
     """Normalize to a zero-padded 5-digit zipcode string, NaN for invalid."""
     s = s.astype("string")
-    return s.str.extract(r"(\d{5})", expand=False)
+    extracted = s.str.extract(r"(\d{5})", expand=False)
+    return extracted
 
 
 def filter_alcohol_only(df: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:

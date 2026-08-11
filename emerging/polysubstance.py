@@ -196,9 +196,14 @@ def profile_table(
                 leads += 1
             rank_pcts.append(idx / (len(seq) - 1))
 
+        # sort_index() before value_counts() breaks ties by name rather than
+        # by hash order, so `top_partners` is reproducible run to run. Without
+        # it, two partners at the same count swap places between runs and the
+        # CSV shows a spurious diff.
         partners = pd.Series(
             [x for c in cases for x in sets[c] if x != sub]
-        ).value_counts()
+        ).value_counts().sort_index(kind="stable").sort_values(
+            ascending=False, kind="stable")
 
         top = []
         for p, k in partners.head(3).items():
