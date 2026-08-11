@@ -111,6 +111,35 @@ qualifies.
 
 ### P5 — READUS-PV reporting conventions in the manuscript `not started`
 
+### P6 — release the scan as a Python package `deferred 2026-08-11`
+
+**Come back to this.** There appears to be no Python implementation of the
+tree-based scan statistic: nothing on PyPI under `treescan`, `pytreescan`,
+`scanstatistics` or the other obvious names, and R's `TreeMineR` covers only
+the tree-*only* variants (Kulldorff 2003/2013), not the tree-temporal one. The
+official tool is a registration-walled C++ binary. `tree.py` + `treescan.py`
+are ~700 lines with no dependency beyond numpy/pandas, and now match the
+reference binary exactly (see the 2026-08-11 entry), so the raw material is
+there.
+
+Deferred rather than dropped, because two things need doing first and neither
+is a side quest off the LA analysis:
+
+1. **Scope honesty.** We implement one corner of TreeScan's surface —
+   conditional-on-node, prospective, high-rate. TreeScan also does
+   unconditional / total-cases / node-and-time conditioning, Bernoulli and
+   Poisson models, retrospective windows, low-rate scans and sequential
+   analysis. A release either says so plainly or grows to cover more.
+2. **The two things that make ours worth having are extensions, not a
+   reimplementation** — the arbitrary reference series and the overlapping-node
+   DAG. Neither is in the literature. They would have to be presented as such,
+   and the reference-series generalisation validated against a simulated ground
+   truth, because it is precisely the part the binary cannot check.
+
+Licensing is not an obstacle: the method is published science and our code was
+written before the binary was ever downloaded. Do not vendor any part of their
+distribution.
+
 ### Open questions needing outside input
 
 - **Which policies?** `regime` identifies *when* something structural happened
