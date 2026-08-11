@@ -24,6 +24,7 @@ substances rising in LA County overdose deaths.
 | Space-time | `spacetime.py` | Bernoulli + space-time-permutation scan over zip circles x recent quarters |
 | Denominator | `census.py` | ACS resident population, 301 LA zips x 2013–2024 |
 | Trend scan | `svtt.py` | spatial variation in temporal trends — where a *slope* differs from the county |
+| Completeness | `nowcast.py` | reporting-delay curve from extract vintages, with a transferability guard |
 
 **Headline results, settled window (recent 2025Q1–Q4 vs baseline 2023Q1–2024Q4;
 2,153 vs 5,491 OD deaths):**
@@ -190,12 +191,12 @@ and discarding it in `_derive`. `census.py` now keeps it: 301 LA zips x
 2013–2024, and **every one of the 280 zips holding deaths has a population**.
 SVTT is therefore back on the table — see P7.
 
-### P3 — Delay-distribution nowcast `not started`
+### P3 — Delay-distribution nowcast `done 2026-08-11`
 
-Replace the hard `CUTOFF` (which deletes 2026 outright) with a fitted
-reporting-delay distribution, so recent quarters are usable with honest
-uncertainty. Note the CDC precedent *and* its documented failure when the
-epidemic changes regime — which ours is doing.
+Built as `nowcast.py`. **The delay curve is measurable and it does not
+transfer**, so the cutoff stays where it is — see the entry below. The warning
+in the original note turned out to be the finding: the regime that shifted was
+the *reporting* process, not the epidemic.
 
 ### P4 — `sparr` relative-risk surface for PCP only `not started`
 
@@ -299,6 +300,60 @@ distribution.
   `_fit_gps_prior`. Revisit on a substance × zip × quarter table.
 - **Spatial methods as *detectors*** — they stay downstream of the temporal
   detector. At n=9 there is nothing to scan.
+
+---
+
+## 2026-08-11 — P3, reporting-delay nowcast
+
+`nowcast.py`. `CUTOFF = 2025-12-31` has always been a judgement with nothing
+behind it, and it decides how much data the project throws away. This measures
+the thing it was guessing at.
+
+**LACME has no report date**, only `DeathDate`, so delay cannot be recovered
+from one extract. It can from two *vintages*: sweeping death-months at a single
+pull date traces the whole curve, because each month sits at a different delay.
+Three overdose extracts exist. The 2024-08 / 2025-05 pair is usable — its
+settled era (2012–2022) agrees to **0.2%**, so the difference is accrual. The
+2025-05 / 2026-04 pair is **not**: its settled era moves **3.5%**, which cannot
+be reporting delay four to fourteen years later. That is a case-definition or
+extraction change, and folding it into a delay estimate would inflate every
+correction. `triangle` prints this drift for whatever pair it is handed.
+
+**The curve** (clean pair, isotonic): 27% complete in the month of death, 66%
+at one month, ~80% at three to five, ~90% at seven to eight, ~100% from ten.
+Its saturating end is independently confirmed in the *current* era — the
+2026-02 and 2026-04 pulls agree to within 1.4% on every month of 2025Q1–Q2.
+
+**The result I nearly shipped, and why it was wrong.** Applied to the current
+extract the curve says 2025Q4 is 81% complete (560 observed → ~690) and 2025Q3
+is 93%, which would mean `CUTOFF` is too late, the recent window is undercounted
+by ~7%, and the monotone 2025 decline (681, 628, 602, 560) is really a decline
+and rebound (681, 629, 650, 690). That is a headline-changing claim and it does
+not survive its own check.
+
+**`transfer_check` refuses it.** The current extract runs at full strength
+through 2026-01 — 198 deaths, in line with every month before it — and then
+drops to **54, 18, 6**. The curve predicts a ramp over those months (79%, 77%,
+66%); what is there is a **cliff**, a 3.7x fall where 1.2x was predicted. No
+smooth accrual process produces that. It is a pull boundary with a few
+fast-closing cases trailing it, and it means today's reporting is not the
+process measured in 2024. The correction is computed, printed, and withheld.
+
+The practical reading inverts: the extract looks essentially complete through
+2026-01, so **`CUTOFF = 2025-12-31` is more likely conservative than lax** and
+stays put. Nothing downstream changes.
+
+*What would settle it, and it is free:* two current-era vintages. Save a dated
+copy of every future extract. Without that this question cannot be reopened,
+however much modelling is thrown at it.
+
+*Defect found by the tests:* an empty settled window made the drift check
+return NaN, which happened to reject — for the wrong reason, and silently.
+It now raises.
+
+*Also fixed:* the isotonic fit was applied to a reversed array, pooling the
+entire curve to a single constant 0.8636. It looked like a plausible flat
+completeness and would have produced a uniform 16% inflation of every quarter.
 
 ---
 
