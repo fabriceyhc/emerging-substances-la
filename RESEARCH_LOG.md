@@ -25,6 +25,7 @@ substances rising in LA County overdose deaths.
 | Denominator | `census.py` | ACS resident population, 301 LA zips x 2013–2024 |
 | Trend scan | `svtt.py` | spatial variation in temporal trends — where a *slope* differs from the county |
 | Completeness | `nowcast.py` | reporting-delay curve from extract vintages, with a transferability guard |
+| Risk surface | `relrisk.py` | Kelsall–Diggle log relative risk with CV bandwidth and tolerance contours |
 
 **Headline results, settled window (recent 2025Q1–Q4 vs baseline 2023Q1–2024Q4;
 2,153 vs 5,491 OD deaths):**
@@ -198,11 +199,11 @@ transfer**, so the cutoff stays where it is — see the entry below. The warning
 in the original note turned out to be the finding: the regime that shifted was
 the *reporting* process, not the epidemic.
 
-### P4 — `sparr` relative-risk surface for PCP only `not started`
+### P4 — relative-risk surface for PCP `done 2026-08-11`
 
-n=367 clears the n ≥ 50–100 threshold that ruled kernel methods out. Turns
-"1.38× tighter" into an actual map. R detour; PCP is the only substance that
-qualifies.
+Built as `relrisk.py` — in Python rather than the planned R/`sparr` detour, for
+the same reason `treescan.py` was. Turns "1.38x tighter" into a map, and the
+map disagrees with the summary in an informative way. See the entry below.
 
 ### P5 — READUS-PV reporting conventions in the manuscript `not started`
 
@@ -300,6 +301,58 @@ distribution.
   `_fit_gps_prior`. Revisit on a substance × zip × quarter table.
 - **Spatial methods as *detectors*** — they stay downstream of the temporal
   detector. At n=9 there is nothing to scan.
+
+---
+
+## 2026-08-11 — P4, Kelsall-Diggle relative-risk surface
+
+`relrisk.py`. Cases are deaths naming the substance, controls the other
+overdose deaths, so r(x) = log(f/g) is 0 where the substance is represented
+exactly as it is county-wide. Same compositional question as everything else,
+answered continuously instead of as one number (`geo.py`) or one circle
+(`spacetime.py`). Written in Python rather than driving R's `sparr`.
+
+**Bandwidth was the objection and it is now measured, not assumed.** `geo.py`
+rejected kernel methods partly because "at n=9-39 that choice would drive the
+answer", and it does: PCP's peak relative risk runs 3.7x at 1 km to 2.0x at
+6 km. The default is therefore chosen by **likelihood cross-validation on the
+case/control labels** (Kelsall-Diggle 1995, what `sparr::LSCV.risk` does),
+which targets the *ratio* rather than either density. It picks **4.0 km**, with
+a flat interior optimum — 3.5, 4 and 5 km are within 2 log-likelihood units of
+each other, which is itself the finding: PCP's excess is a broad regional
+gradient, not a hotspot, and the data will not support fine structure.
+Silverman's normal-reference rule says 4.19 km but is not used; it assumes a
+Gaussian cloud and LA is a 100 km multi-centre sprawl.
+
+**The map disagrees with `geo.py`'s headline zip, and both are right.** `geo.py`
+reports 90013 (Skid Row) as PCP's top zip — that is the *modal* zip by raw
+count (23 deaths). By *share of local overdose deaths* the peak is elsewhere:
+90044 South LA at 15.2%, 90744 Wilmington 14.3%, 90806 Long Beach 13.8%,
+against 4.84% county-wide. The surface accordingly puts the significant excess
+in a contiguous **South LA to Harbor corridor** (90731, 90744, 90732, 90802,
+90813, 90044) at roughly 2.1x, with the valleys and the Antelope Valley
+depleted. Skid Row is inside an elevated downtown area but is not the peak —
+it has the most PCP deaths because it has the most deaths.
+
+12.6% of the county is above the county-wide rate at pointwise p <= 0.05.
+These are **pointwise** contours over 41,000 cells with no multiplicity
+correction; read contiguous regions, and go to `spacetime.py` for a single
+adjusted verdict.
+
+*Three defects found while building, all of which produced a plausible-looking
+wrong map:*
+- `eps = 1e-12` floored the log-ratio at about -27 wherever a cell had zero
+  cases, so a handful of empty-desert cells set the colour scale from -20 to
+  +20 and hid the real +/-1 range. Replaced with a half-death pseudo-count
+  centred so that f/g = p_global gives exactly 0 at any local density. This
+  also regularised the upper tail: bandwidth sensitivity fell from 13.4x-2.0x
+  to 3.7x-2.0x, so a chunk of the "bandwidth drives everything" problem was
+  really this bug.
+- No low-density mask, so the ratio was being estimated where almost no deaths
+  informed it. Now requires >= 5 deaths within one bandwidth.
+- `scipy.ndimage.gaussian_filter` returns the *input* dtype, so an integer
+  count grid comes back truncated — a smoothed density of 0.3 becomes 0. Caught
+  by the calibration test firing at 84% instead of 5%. `log_rr` now coerces.
 
 ---
 
