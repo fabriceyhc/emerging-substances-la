@@ -68,10 +68,10 @@ EB05's rolling 12-quarter frame is like-for-like.
 
 Usage:
 
-    python -m emerging.treescan scan
-    python -m emerging.treescan scan --reference mentions
-    python -m emerging.treescan backtest
-    python -m emerging.treescan plot
+    emerging treescan scan
+    emerging treescan scan --reference mentions
+    emerging treescan backtest
+    emerging treescan plot
 """
 
 from __future__ import annotations
@@ -86,14 +86,19 @@ import numpy as np
 import pandas as pd
 import typer
 
-from emerging.extract import MENTIONS_PATH
-from emerging.paths import FIG_DIR, RESULTS_DIR
-from emerging.tree import Node, build
-from emerging.trends import (ALARM_THRESHOLD, BLUE, CUTOFF, INK, INK_2,
-                             KNOWN_EMERGENCES, MUTED, ORANGE, AQUA, YELLOW,
+from emerging.ingest.extract import MENTIONS_PATH
+from emerging.paths import results_dir
+from emerging.core.tree import Node, build
+from emerging.config import CUTOFF
+# ALARM_THRESHOLD and KNOWN_EMERGENCES are EB05 concepts and the head-to-head
+# genuinely depends on them -- this import is the real thing, not plumbing.
+from emerging.analysis.trends import (ALARM_THRESHOLD, KNOWN_EMERGENCES,
                              load_quarterly, rank_substances)
+from emerging.viz import AQUA, BLUE, INK, INK_2, MUTED, ORANGE, YELLOW
 
 app = typer.Typer(add_completion=False)
+
+RESULTS_DIR = results_dir("treescan")
 
 
 # Conditioning frame, in quarters. 12 = EB05's 4 recent + 8 baseline, so the
@@ -116,9 +121,9 @@ RI_THRESHOLD = 100.0
 # Real signals here are >= 1e-3; see `_llr`.
 _LLR_EPS = 1e-9
 
-SCAN_PATH = RESULTS_DIR / "treescan_signals.csv"
-BACKTEST_PATH = RESULTS_DIR / "treescan_backtest.csv"
-HEADTOHEAD_PATH = RESULTS_DIR / "treescan_vs_eb05.csv"
+SCAN_PATH = RESULTS_DIR / "signals.csv"
+BACKTEST_PATH = RESULTS_DIR / "backtest.csv"
+HEADTOHEAD_PATH = RESULTS_DIR / "vs_eb05.csv"
 
 LEVEL_COLOR = {"root": MUTED, "superclass": INK_2, "category": AQUA,
                "family": ORANGE, "substance": BLUE}
@@ -369,7 +374,7 @@ def scan(
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / SCAN_PATH.name
     if reference != "deaths":
-        path = out_dir / f"treescan_signals_{reference}.csv"
+        path = out_dir / f"signals_{reference}.csv"
     res.to_csv(path, index=False)
 
     quarters = [q for q in sorted(ref.index) if q <= as_of][-study_quarters:]
@@ -582,7 +587,7 @@ def backtest(
 @app.command("plot")
 def plot(
     results_dir: Path = typer.Option(RESULTS_DIR, "--results-dir"),
-    fig_dir: Path = typer.Option(FIG_DIR, "--fig-dir"),
+    fig_dir: Path = typer.Option(RESULTS_DIR, "--fig-dir"),
     top: int = typer.Option(14, "--top"),
 ) -> None:
     """Two panels: head-to-head detection timing, and the current signal table."""
@@ -706,7 +711,7 @@ def plot(
 
     fig.tight_layout(rect=(0, 0.115, 1, 1))
     fig_dir.mkdir(parents=True, exist_ok=True)
-    out = fig_dir / "treescan.png"
+    out = fig_dir / "scan.png"
     fig.savefig(out, dpi=160)
     plt.close(fig)
     typer.echo(f"wrote {out}")

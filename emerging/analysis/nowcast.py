@@ -57,9 +57,9 @@ copy of every future extract; nothing else is needed, and without it this
 question cannot be reopened no matter how much modelling is thrown at it.
 
 Usage:
-    python -m emerging.nowcast triangle
-    python -m emerging.nowcast estimate
-    python -m emerging.nowcast plot
+    emerging nowcast triangle
+    emerging nowcast estimate
+    emerging nowcast plot
 """
 
 from __future__ import annotations
@@ -73,10 +73,13 @@ import numpy as np
 import pandas as pd
 import typer
 
-from emerging.paths import FIG_DIR, LACME_PATH, RESULTS_DIR
-from emerging.trends import BLUE, CUTOFF, INK, INK_2, MUTED, ORANGE
+from emerging.paths import LACME_PATH, results_dir
+from emerging.config import CUTOFF
+from emerging.viz import BLUE, INK, INK_2, MUTED, ORANGE
 
 app = typer.Typer(add_completion=False)
+
+RESULTS_DIR = results_dir("nowcast")
 
 # Vintages live outside this repository on purpose: they are full LACME
 # extracts and carry decedent names, so they are read in place and only the
@@ -91,7 +94,7 @@ SETTLED_END = "2022-12"
 MAX_DELAY = 15                 # months; the curve is flat well before this
 
 DELAY_PATH = RESULTS_DIR / "reporting_delay.csv"
-NOWCAST_PATH = RESULTS_DIR / "nowcast_quarters.csv"
+NOWCAST_PATH = RESULTS_DIR / "quarters.csv"
 
 
 def _monthly(path: Path) -> tuple[pd.Series, pd.Timestamp]:
@@ -374,7 +377,7 @@ def estimate(
 @app.command("plot")
 def plot(
     results_dir: Path = typer.Option(RESULTS_DIR, "--results-dir"),
-    fig_dir: Path = typer.Option(FIG_DIR, "--fig-dir"),
+    fig_dir: Path = typer.Option(RESULTS_DIR, "--fig-dir"),
 ) -> None:
     """Delay curve, and what it does to the recent quarterly counts."""
     curve = pd.read_csv(results_dir / DELAY_PATH.name)

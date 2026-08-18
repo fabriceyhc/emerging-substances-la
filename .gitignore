@@ -36,8 +36,8 @@ venv/
 # The tarball, the binary and its documents are Kulldorff's, redistributed
 # under their own EULA -- do not commit them. Only our comparison scripts and
 # the resulting numbers belong in git.
-treescan/treescan64
-treescan/treescan*.tar.gz
-treescan/documents/
-treescan/examples/
-treescan/work/
+vendor/treescan/treescan64
+vendor/treescan/treescan*.tar.gz
+vendor/treescan/documents/
+vendor/treescan/examples/
+vendor/treescan/work/

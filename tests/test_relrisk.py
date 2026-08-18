@@ -16,7 +16,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from emerging import relrisk as rr
+from emerging.analysis import relrisk as rr
 
 
 def _grids(shape=(60, 60), rate=0.2, p=0.25, seed=0):

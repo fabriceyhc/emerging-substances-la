@@ -6,6 +6,70 @@ not deleted — the artifact is usually the more useful record.
 
 ---
 
+## 2026-08-18 — Reorganisation, and three reproducibility defects it exposed
+
+Structural only: no method changed, and 24 result tables were regenerated
+byte-identical to the committed ones to prove it (including the TreeScan binary
+parity table and the 261x253 relrisk surface at max|diff| = 0). Tests held at
+54 passed / 1 skipped throughout.
+
+**What moved.** `CUTOFF` was defined three times (`trends`, `geo`,
+`polysubstance`) and the palette three times, with five more modules importing
+colours *from* `trends.py` — so rendering the relative-risk map pulled in the
+empirical-Bayes ranking machinery. Both now live in `config.py` and `viz.py`,
+which import nothing from the package. `load_points`, `UTM11N` and
+`MAX_CASE_FRACTION` moved out of `geo.py` into `core/spatial.py`, since three
+spatial analyses were importing them from the case-control clustering module.
+The import graph now has exactly one cross-analysis edge — `treescan -> trends`
+for `ALARM_THRESHOLD` and `KNOWN_EMERGENCES`, which is real.
+
+Modules are grouped `ingest/ core/ analysis/ validation/`; `results/` is one
+directory per module with figures beside their tables (`results/figures/` and
+`FIG_DIR` are gone); findings prose moved from a 1,048-line README into
+`docs/findings/<analysis>.md`. `emerging <module> <command>` is now a single
+CLI, and `emerging pipeline` encodes the `alarms`-before-`plot` ordering that
+was previously only a README paragraph.
+
+**Three defects, all pre-existing, found by diffing regenerated output against
+committed output:**
+
+1. *`polysubstance_profile.csv` was not reproducible.* `sort_values` used
+   pandas' default unstable quicksort on a tied column, fed by sets iterating
+   in string-hash order, so tied rows reshuffled every run — two runs of
+   unmodified code disagreed. A `git diff` of the committed CSV could not
+   distinguish a real change from noise. Fixed with an explicit name tiebreak
+   plus `kind="stable"`; verified across three `PYTHONHASHSEED` values, values
+   unchanged.
+
+2. *Same defect in `spacetime.py`.* Fixed the same way. It is why a last-bit
+   float difference in one `llr` presented as four changed rows. That last-bit
+   difference is itself real but environmental, not ours: running the scan on
+   pre-reorganisation code at `b4ed99b` gives output identical to the current
+   code on all 92 rows (max|llr diff| = 0), while *both* differ from the
+   committed CSV by 4.44e-16 on the same single row — i.e. the committed file
+   was written under a different numpy/scipy build. Harmless to conclusions,
+   and no longer able to churn the table now that the sort is deterministic.
+
+3. **The committed svtt per-substance p-values do not reproduce, and one of
+   them crosses 0.05.** `svtt_clusters_fentanyl.csv` holds p = 0.63 where the
+   default invocation gives 0.657; `svtt_clusters_methamphetamine.csv` holds
+   **p = 0.02 where the default gives 0.054**. The test statistics are
+   bit-identical (8.180210406528204), so it is purely the Monte Carlo draw:
+   those files were generated with a seed or `--n-perm` other than the
+   defaults, and the invocation was never recorded. Confirmed not to be a
+   consequence of this reorganisation by running the scan on pre-reorganisation
+   code in a separate worktree at `b4ed99b`, which reproduces 0.657 exactly.
+   **Unresolved and deliberately not papered over** — regenerating would turn a
+   significant cluster non-significant, which is a research decision, not a
+   cleanup. Either re-run at defaults and accept 0.054, or recover the original
+   invocation and record it in the file.
+
+The general lesson is the one this log keeps relearning: a results directory
+that is read to check the work has to be diff-stable, or the diff stops being
+evidence.
+
+---
+
 ## Current state (2026-08-10)
 
 **What exists.** A working pipeline from LACME cause-of-death narratives to a

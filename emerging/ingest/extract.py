@@ -26,9 +26,9 @@ Three commands:
     validate  -- precision/recall of the extraction against the 8 coded flags
 
 Usage:
-    python -m emerging.extract extract
-    python -m emerging.extract unmatched --top 80
-    python -m emerging.extract validate
+    emerging extract extract
+    emerging extract unmatched --top 80
+    emerging extract validate
 """
 
 from __future__ import annotations
@@ -39,16 +39,19 @@ from pathlib import Path
 import pandas as pd
 import typer
 
-from emerging.lexicon import (
+from emerging.ingest.lexicon import (
     FUZZY_CUTOFF, MAX_NGRAM, OUT_DIR, Lexicon, fuzzy_resolve, load_lexicon,
     tokenize,
 )
 # Cohort definition shared with the modeling panel — do not re-implement.
-from emerging.cohort import _norm_zip, filter_alcohol_only
+from emerging.ingest.cohort import _norm_zip, filter_alcohol_only
 
 app = typer.Typer(add_completion=False)
 
-from emerging.paths import LACME_PATH, RESULTS_DIR  # noqa: E402
+from emerging.paths import LACME_PATH, results_dir  # noqa: E402
+
+RESULTS_DIR = results_dir("extract")
+
 MENTIONS_PATH = OUT_DIR / "substance_mentions.parquet"
 UNMATCHED_PATH = OUT_DIR / "unmatched_tokens.csv"
 

@@ -25,9 +25,9 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from emerging import treescan_validate as tv
-from emerging.extract import MENTIONS_PATH
-from emerging.treescan import run_scan
+from emerging.validation import treescan_validate as tv
+from emerging.ingest.extract import MENTIONS_PATH
+from emerging.analysis.treescan import run_scan
 
 pytestmark = pytest.mark.skipif(
     not tv.TREESCAN_BIN.exists() or not MENTIONS_PATH.exists(),

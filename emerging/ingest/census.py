@@ -48,8 +48,8 @@ https://api.census.gov/data/key_signup.html.
 
 Usage:
     export CENSUS_API_KEY=...
-    python -m emerging.census fetch
-    python -m emerging.census show
+    emerging census fetch
+    emerging census show
 """
 
 from __future__ import annotations
@@ -129,7 +129,7 @@ def load_population(path: Path = POP_PATH) -> pd.DataFrame:
     """zipcode x year -> population, as strings/ints ready to join."""
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} not found — run `python -m emerging.census fetch` first")
+            f"{path} not found — run `emerging census fetch` first")
     d = pd.read_csv(path, dtype={"zipcode": str})
     return d
 
@@ -235,8 +235,8 @@ def show(
 
     if not mentions_check:
         return
-    from emerging.geo import load_points
-    from emerging.extract import MENTIONS_PATH
+    from emerging.core.spatial import load_points
+    from emerging.ingest.extract import MENTIONS_PATH
     bg, _ = load_points(MENTIONS_PATH)
     have = set(pop["zipcode"])
     deaths_by_zip = bg.groupby("zip").size()

@@ -49,9 +49,9 @@ the few substances with hundreds of deaths, and it is worth running mainly
 because that expectation should be tested rather than assumed.
 
 Usage:
-    python -m emerging.spacetime scan
-    python -m emerging.spacetime scan --substances PCP,Lidocaine --n-perm 9999
-    python -m emerging.spacetime plot
+    emerging spacetime scan
+    emerging spacetime scan --substances PCP,Lidocaine --n-perm 9999
+    emerging spacetime plot
 """
 
 from __future__ import annotations
@@ -66,14 +66,16 @@ import pandas as pd
 import typer
 from scipy.special import xlogy
 
-from emerging.extract import MENTIONS_PATH
-from emerging.geo import (CUTOFF, MAX_CASE_FRACTION, SINCE, UTM11N,
-                          load_points)
-from emerging.paths import FIG_DIR, RESULTS_DIR, ZIPS_PATH
-from emerging.tree import build
-from emerging.trends import AQUA, BLUE, INK, INK_2, MUTED, ORANGE
+from emerging.ingest.extract import MENTIONS_PATH
+from emerging.config import CUTOFF, SINCE
+from emerging.core.spatial import MAX_CASE_FRACTION, UTM11N, load_points
+from emerging.paths import ZIPS_PATH, results_dir
+from emerging.core.tree import build
+from emerging.viz import AQUA, INK, MUTED, ORANGE
 
 app = typer.Typer(add_completion=False)
+
+RESULTS_DIR = results_dir("spacetime")
 
 # Largest circle, as a share of all overdose deaths in the study window. The
 # SaTScan convention is 50%; 25% is used here for the reason the TreeScan user
@@ -87,7 +89,7 @@ N_PERM = 999
 # because a cylinder splits those cases across space *and* time.
 MIN_CASES = 20
 
-SCAN_PATH = RESULTS_DIR / "spacetime_clusters.csv"
+SCAN_PATH = RESULTS_DIR / "clusters.csv"
 
 
 def _bernoulli_llr(c: np.ndarray, n: np.ndarray, C: float,
@@ -404,8 +406,14 @@ def scan(
             res["substance"] = name
             rows.append(res)
 
-    out = pd.DataFrame(rows).sort_values(["model", "llr"],
-                                         ascending=[True, False])
+    # Substance breaks ties on llr, and the sort is stable. Without it two llr
+    # values that differ only in the last bit -- which happens across numpy
+    # versions -- reorder the table, so a `git diff` of the committed CSV shows
+    # several changed rows where nothing changed. Same defect, same fix, as in
+    # `polysubstance.profile_table`.
+    out = pd.DataFrame(rows).sort_values(
+        ["model", "llr", "substance"], ascending=[True, False, True],
+        kind="stable")
     # Each p-value is already adjusted for every cylinder searched *within* one
     # substance. It is not adjusted for having scanned 46 substances, and
     # reporting it as though it were is precisely the mistake the tree scan was
@@ -449,7 +457,7 @@ def scan(
 @app.command("plot")
 def plot(
     results_dir: Path = typer.Option(RESULTS_DIR, "--results-dir"),
-    fig_dir: Path = typer.Option(FIG_DIR, "--fig-dir"),
+    fig_dir: Path = typer.Option(RESULTS_DIR, "--fig-dir"),
     model: str = typer.Option("bernoulli", "--model"),
     top: int = typer.Option(4, "--top"),
 ) -> None:
@@ -517,7 +525,7 @@ def plot(
              fontsize=7.6, color=MUTED, va="bottom", wrap=True)
     fig.tight_layout(rect=(0, 0.045, 1, 1))
     fig_dir.mkdir(parents=True, exist_ok=True)
-    out = fig_dir / "spacetime_clusters.png"
+    out = fig_dir / "clusters.png"
     fig.savefig(out, dpi=160)
     plt.close(fig)
     typer.echo(f"wrote {out}")

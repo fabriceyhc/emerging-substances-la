@@ -13,63 +13,99 @@ mitragynine, para-fluorofentanyl and ~200 more. Extraction turns 8 columns into
 **219 substances at 99.8% decedent coverage**, which is the input every method
 in this directory depends on.
 
+## Layout
+
+```
+emerging/
+  paths.py  config.py  viz.py  cli.py   shared: where, what window, what colour
+  ingest/      cohort  lexicon  extract  census
+  core/        tree  spatial
+  analysis/    trends  treescan  geo  spacetime  svtt  relrisk  nowcast  polysubstance
+  validation/  treescan_validate
+results/<analysis>/    tables and figures for that module, together
+docs/findings/<analysis>.md    what it found and what to distrust
+tests/test_<analysis>.py
+```
+
+One name per question, four ways: `emerging/analysis/svtt.py` ↔
+`results/svtt/` ↔ `docs/findings/svtt.md` ↔ `tests/test_svtt.py`.
+
+`config.py` holds the study-design parameters that must agree across analyses —
+`CUTOFF` above all, which was previously defined three times. `viz.py` holds the
+palette, which was also defined three times and imported from `trends.py` by
+five more modules. Neither imports anything from the package, so an analysis can
+depend on them without depending on another analysis.
+
 ## Pipeline
 
 ```bash
-python -m emerging.lexicon      build     # alias -> canonical map
-python -m emerging.extract      extract   # decedent x substance table
-python -m emerging.extract      validate  # score vs the 8 coded flags
-python -m emerging.trends       rank      # EB05 ranking
-python -m emerging.trends       backtest  # does the detector fire?
-python -m emerging.trends       alarms    # every breach, ever  (run before plot)
-python -m emerging.trends       watch     # national watchlist vs LA
-python -m emerging.trends       regime    # recording artifacts that move EB05
-python -m emerging.trends       plot      # five figures
-python -m emerging.tree         show      # the hierarchy the scan runs over
-python -m emerging.tree         check     # family members absent from LA
-python -m emerging.treescan     scan      # tree-temporal scan, current quarter
-python -m emerging.treescan     backtest  # as-of sweep + head-to-head vs EB05
-python -m emerging.treescan     plot
-python -m emerging.treescan_validate compare   # vs the TreeScan C++ binary
-python -m emerging.polysubstance profile  # cause vs passenger
-python -m emerging.polysubstance plot
-python -m emerging.geo          cluster   # is it localized?
-python -m emerging.geo          plot
-python -m emerging.spacetime    scan      # where, and is it growing there?
-python -m emerging.spacetime    plot
-python -m emerging.census       fetch     # ACS population per zip per year
-python -m emerging.census       show
-python -m emerging.svtt         scan      # where is mortality rising fastest?
-python -m emerging.svtt         plot
-python -m emerging.nowcast      triangle  # reporting-delay curve from vintages
-python -m emerging.nowcast      estimate  # is the CUTOFF defensible?
-python -m emerging.nowcast      plot
-python -m emerging.relrisk      surface   # relative-risk map (PCP by default)
-python -m emerging.relrisk      plot
+emerging pipeline              # every stage, in dependency order
+emerging pipeline --dry-run    # print the order and stop
 ```
 
-`alarms` must run before `plot`: it writes `alarm_history.csv` and
-`eb05_sweep.csv`, which supply the breach annotations and the alarm-timeline
-figure. `plot` warns and skips those rather than recomputing a 45-quarter
-sweep.
+Or one at a time — `emerging --help` lists all of them:
+
+```bash
+emerging lexicon       build     # alias -> canonical map
+emerging extract       extract   # decedent x substance table
+emerging extract       validate  # score vs the 8 coded flags
+emerging trends        rank      # EB05 ranking
+emerging trends        backtest  # does the detector fire?
+emerging trends        alarms    # every breach, ever  (run before plot)
+emerging trends        watch     # national watchlist vs LA
+emerging trends        regime    # recording artifacts that move EB05
+emerging trends        plot      # five figures
+emerging tree          show      # the hierarchy the scan runs over
+emerging tree          check     # family members absent from LA
+emerging treescan      scan      # tree-temporal scan, current quarter
+emerging treescan      backtest  # as-of sweep + head-to-head vs EB05
+emerging treescan      plot
+emerging treescan-validate compare   # vs the TreeScan C++ binary
+emerging polysubstance profile   # cause vs passenger
+emerging polysubstance plot
+emerging geo           cluster   # is it localized?
+emerging geo           plot
+emerging census        fetch     # ACS population per zip per year
+emerging spacetime     scan      # where, and is it growing there?
+emerging spacetime     plot
+emerging svtt          scan      # where is mortality rising fastest?
+emerging svtt          profile
+emerging svtt          plot
+emerging nowcast       triangle  # reporting-delay curve from vintages
+emerging nowcast       estimate  # is the CUTOFF defensible?
+emerging nowcast       plot
+emerging relrisk       surface   # relative-risk map (PCP by default)
+emerging relrisk       plot
+```
+
+`trends alarms` must run before `trends plot` — it writes `alarm_history.csv`
+and `eb05_sweep.csv`, which supply the breach annotations and the alarm-timeline
+figure, and `plot` warns and skips them rather than recomputing a 45-quarter
+sweep. `emerging pipeline` encodes that order so it cannot be got wrong by hand.
+
+The old `python -m emerging.analysis.trends rank` form still works; every module
+keeps its own Typer app.
 
 | Module | Role |
 |---|---|
-| `lexicon.py` | 4,089 aliases → 3,127 canonicals from the DEA NFLIS catalog + a curated supplement (ethanol, ME misspellings, metabolite/isomer rollups) |
-| `extract.py` | greedy longest-n-gram matcher over the narrative fields, with an audited fuzzy fallback for ME typos |
-| `trends.py` | gamma-Poisson empirical-Bayes ranking, as-of backtest, alarm history, watchlist, recording diagnostics, figures |
-| `tree.py` | the substance hierarchy — NFLIS categories plus a pharmacological family layer; **the domain-knowledge core**, a scan can only find branches this file encodes |
-| `treescan.py` | tree-temporal scan statistic: every node × every recent window, with a Monte Carlo p-value adjusted for the whole search |
-| `treescan_validate.py` | exports our tree/counts to TreeScan's input format and diffs the two implementations — needs the binary, which is not in the repo |
-| `polysubstance.py` | is a flagged substance a cause of death or a passenger — co-occurrence plus position on the ME's cause line |
-| `geo.py` | case-control permutation test for spatial localization against the overdose-death background |
-| `spacetime.py` | space-time scan over circles of zipcodes x recent quarters — separates "over-represented here" from "growing here" |
-| `census.py` | ACS resident population per zip per year — the denominator the rest of the pipeline deliberately did without |
-| `svtt.py` | spatial variation in temporal trends — where a *slope* differs from the county, not where a *level* is high |
-| `nowcast.py` | reporting-delay curve from extract vintages, with a guard that refuses to apply it when the target extract does not obey it |
-| `relrisk.py` | Kelsall–Diggle log relative-risk surface, CV-selected bandwidth, random-labelling tolerance contours |
-| `cohort.py` | overdose-death cohort definition — **a vendored copy**, see below |
-| `paths.py` | where the data lives |
+| `ingest/lexicon.py` | 4,089 aliases → 3,127 canonicals from the DEA NFLIS catalog + a curated supplement (ethanol, ME misspellings, metabolite/isomer rollups) |
+| `ingest/extract.py` | greedy longest-n-gram matcher over the narrative fields, with an audited fuzzy fallback for ME typos |
+| `ingest/census.py` | ACS resident population per zip per year — the denominator the rest of the pipeline deliberately did without |
+| `ingest/cohort.py` | overdose-death cohort definition — **a vendored copy**, see below |
+| `core/tree.py` | the substance hierarchy — NFLIS categories plus a pharmacological family layer; **the domain-knowledge core**, a scan can only find branches this file encodes |
+| `core/spatial.py` | projection, geocoded cohort, facility flag, and the case-fraction guard — shared by every spatial analysis |
+| `analysis/trends.py` | gamma-Poisson empirical-Bayes ranking, as-of backtest, alarm history, watchlist, recording diagnostics, figures |
+| `analysis/treescan.py` | tree-temporal scan statistic: every node × every recent window, with a Monte Carlo p-value adjusted for the whole search |
+| `analysis/polysubstance.py` | is a flagged substance a cause of death or a passenger — co-occurrence plus position on the ME's cause line |
+| `analysis/geo.py` | case-control permutation test for spatial localization against the overdose-death background |
+| `analysis/spacetime.py` | space-time scan over circles of zipcodes × recent quarters — separates "over-represented here" from "growing here" |
+| `analysis/svtt.py` | spatial variation in temporal trends — where a *slope* differs from the county, not where a *level* is high |
+| `analysis/nowcast.py` | reporting-delay curve from extract vintages, with a guard that refuses to apply it when the target extract does not obey it |
+| `analysis/relrisk.py` | Kelsall–Diggle log relative-risk surface, CV-selected bandwidth, random-labelling tolerance contours |
+| `validation/treescan_validate.py` | exports our tree/counts to TreeScan's input format and diffs the two implementations — needs the binary, which is not in the repo |
+| `config.py` | study-design parameters shared across analyses (`CUTOFF`, `SINCE`, the windows) |
+| `viz.py` | the plot palette |
+| `paths.py` | where the data lives; `results_dir()` gives each analysis its own output directory |
 
 ## Setup
 
@@ -86,14 +122,14 @@ All commands are run from the repository root. Paths are fixed (`emerging/paths.
 | `data/raw/nflis/` | yes | DEA NFLIS catalog, public |
 | `data/raw/_geo/` | yes | LA County zipcode boundaries, public |
 | `data/raw/census/` | yes | ACS population per zip per year, public aggregate |
-| `results/` | yes | aggregate only — no case numbers, no coordinates |
+| `results/<analysis>/` | yes | aggregate only — no case numbers, no coordinates |
 
 **Do not add `.gitignore` exceptions for the first two.** Regenerate the
-processed tables with `lexicon build` then `extract extract`.
+processed tables with `emerging lexicon build` then `emerging extract extract`.
 
 ### The cohort definition is duplicated, and that is a liability
 
-`cohort.py` (`filter_alcohol_only`, `_norm_zip`) is a **vendored copy**. The
+`ingest/cohort.py` (`filter_alcohol_only`, `_norm_zip`) is a **vendored copy**. The
 authoritative version lives in the `predict_rosla` repository at
 `rosla_nowcast/modeling/zipcode/monthly/signal_check/ccf.py` and is itself kept
 in sync with the epi project. It is duplicated here only because this
@@ -105,428 +141,27 @@ not, every count silently stops matching and **nothing fails loudly**. Diff
 before publishing any number that gets compared to the modeling work.
 Copied 2026-08-10 from `predict_rosla` @ e357baf.
 
-## Documents
+## Findings
 
-- [`RESEARCH_LOG.md`](RESEARCH_LOG.md) — current state, findings, game plan, and
-  the artifacts that would have manufactured false results
-- [`LITERATURE_REVIEW.md`](LITERATURE_REVIEW.md) — rare-event detection and
-  spatial clustering methods; what is better than this and what is not
-
-## Validation
-
-Extraction scored against the ME's own coded flags — the only ground truth
-available (`results/flag_validation.csv`):
-
-| Flag | Precision | Recall | F1 |
-|---|---|---|---|
-| Fentanyl (incl. analogs) | 0.997 | 0.998 | 0.997 |
-| Heroin | 0.995 | 0.998 | 0.996 |
-| Methamphetamine | 0.993 | 0.989 | 0.991 |
-| Cocaine | 0.985 | 0.997 | 0.991 |
-| Alcohol | 0.986 | 0.962 | 0.974 |
-| Benzodiazepines | 0.990 | 0.936 | 0.962 |
-
-Disagreement is not automatically extractor error — the coded flags are
-themselves regex-derived — so both directions are reported.
-
-### Why coverage is 99.8% and not 100%
-
-55 of 22,004 deaths (0.25%) get no named substance. Almost none of it is a
-fixable extractor defect:
-
-| Cause | n | Fixable? |
-|---|---|---|
-| The examiner named a **class, not a drug** — "opioid intoxication", "effects of opioids" | 34 | No. The record does not say which opioid. |
-| **Chronic alcohol** phrasing — alcoholic hepatitis / pancreatitis / cardiomyopathy, chronic alcoholism | 14 | No, by design. These are chronic conditions contributing to a death, not acute substance involvement. |
-| **Mid-word OCR damage** — `ALCOHOLIC INTOX ICATION`, `100COLCHI CINE` | 4 | Not without intra-word repair, which risks more than it recovers. |
-| **Not overdoses at all** — anaphylaxis to ceftriaxone / Zosyn, pulmonary coccidioidomycosis | 3 | No — these are cohort-definition edge cases. |
-
-Getting from 99.4% to 99.8% came from three fixes, all worth knowing about:
-
-1. **The hyphen rule was too strict.** It only split a hyphenated token when
-   *every* part resolved, so `METHAMPHETAMINE-INDUCED`, `COCAINE-ASSOCIATED`,
-   `ETHANOL-OLEANDRIN` and `ALPRAZOLAM--HELIUM` all discarded a known substance
-   because one sibling token was a modifier or an uncatalogued compound. It now
-   keeps whichever parts resolve. This is safe because whole aliases are matched
-   and consumed first, so `PARA-FLUOROFENTANYL` never reaches the split branch.
-2. **`ALCOHOLIC INTOXICATION`** — the adjective form was the single largest gap
-   (67 deaths). Only the two-word acute phrasings are mapped; a bare `ALCOHOLIC`
-   would also fire on alcoholic cirrhosis and hepatitis.
-3. **Brand names and non-catalog poisons** — Xanax, OxyContin, arsenic, zinc,
-   colchicine, oleandrin. NFLIS catalogues trafficked *drugs*, so poisons and
-   plant toxins that appear in overdose casework are simply absent from it.
-
-**Do not fix the rest by loosening the fuzzy cutoff.** Tested at 0.85, it
-recovers a few real typos and admits six false positives, the worst being bare
-`ALCOHOLIC` → Ethanol at 104 mentions — which would have tagged alcoholic
-cirrhosis as acute alcohol involvement and corrupted the ethanol series. Those
-tokens are now in `FUZZY_BLOCK` so the mistake cannot be reintroduced by
-changing one number. Verified typos go in `SUPPLEMENT` by name instead.
-
-One of those by-name additions changed a result: `CARENTANYL EFFECTS` (2017-06)
-is a real carfentanil death, moving carfentanil's first LA appearance from
-2024Q1 to 2017Q2 — an isolated case during the national 2016–17 carfentanil
-wave, then a seven-year gap before the 2024 cluster.
-
-Two review surfaces, both worth reading before trusting a result:
-`extract unmatched` ranks tokens the lexicon never consumed (where a genuinely
-novel substance would first surface), and `fuzzy_resolutions.csv` logs every
-typo substitution the matcher guessed at.
-
-## Does the ranking work?
-
-`backtest` re-runs the ranking as of each historical quarter, scoring only data
-available then. Without it a detector that never fires and a detector that is
-broken look identical.
-
-| Substance | Peak EB05 | Best rank | First top-10 |
-|---|---|---|---|
-| para-Fluorofentanyl | 7.00 | 1 | 2021Q1 |
-| Carfentanil | 5.02 | 1 | 2024Q2 |
-| Bromazolam | 4.78 | 1 | 2023Q4 |
-| Mitragynine | 2.36 | 2 | 2022Q4 |
-| Xylazine | 1.93 | 4 | 2024Q2 |
-
-All five reach the top 4 in the quarter they emerge — **including xylazine at
-n=6**, which is a stronger result than the raw counts suggest. The shrinkage is
-what makes this possible: it measures a share shift against ~600 deaths per
-quarter, not the count in isolation.
-
-This calibrates a threshold: real emergences score EB05 1.93–7.00, so
-**EB05 > 1.5** is a defensible alarm line.
-
-### Nothing currently clears the line — but watch lidocaine
-
-On the settled window (recent 2025Q1–2025Q4), the highest EB05 across all 219
-substances is **1.27** (PCP). Nothing reaches 1.5.
-
-**Lidocaine is the one to keep an eye on, and it is a lesson in windowing.**
-Its counts run 2 → 4 → **10 → 11** → 2 → 2 → 2 across 2024Q2–2025Q4: a sharp
-burst straddling the 2024/2025 boundary, then a return to baseline. Where the
-4-quarter window falls decides what you see:
-
-| Recent window | Lidocaine n | EB05 | Verdict |
-|---|---|---|---|
-| 2025Q1–2025Q4 (settled, current default) | 17 | 1.04 | below the line |
-| 2024Q4–2025Q3 (window shifted one quarter) | 25 | 2.20 | above the line |
-| Peak over the as-of sweep (2025Q1) | 27 | **4.29** | rank 1 |
-
-All three are correct; they answer slightly different questions. The substance
-is real — 43 lifetime cases, all but one named in the primary `CauseA` field
-rather than stray narrative text, and 38 of 43 co-occurring with fentanyl, the
-adulterant-attaching-to-the-hub pattern. What the table shows is that a
-**short burst is window-sensitive in a way a sustained trend is not.**
-
-Practical rule: for any spiky trajectory, quote the `backtest` peak alongside
-the current value. A single-window EB05 will under- or over-state a burst
-depending on where the boundary lands.
-
-## Scanning the hierarchy instead of one substance at a time
-
-`treescan.py` implements a tree-temporal scan statistic over the substance
-hierarchy in `tree.py`: every node — leaf, pharmacological family, NFLIS
-category, superclass, root — against every trailing window of 1–6 quarters
-inside the same 12-quarter frame EB05 uses. The p-value comes from the Monte
-Carlo distribution of the **maximum** log-likelihood ratio over the whole
-search, so it is already adjusted for all 158 nodes × 6 windows. Reported as a
-recurrence interval: RI 100 means a signal this strong turns up in one scan in
-100 by chance.
-
-It removes the two choices the section above just showed to be load-bearing —
-which window, and which of 205 substances you looked at — and the multiplicity
-correction charges for having made them.
-
-**It changes the current answer.** EB05 says nothing clears 1.5. The scan,
-after full adjustment, says four nodes do:
-
-| Node | Level | Window | Observed | Expected | RI |
-|---|---|---|---|---|---|
-| Lidocaine | substance | 6q | 31 | 17.4 | 1,111 |
-| Dissociatives | family | 5q | 203 | 158.3 | 455 |
-| Depressants and Tranquilizers | category | 5q | 225 | 178.4 | 270 |
-| PCP | substance | 5q | 174 | 134.5 | 185 |
-
-Lidocaine's burst is real; EB05 missed it only because the burst straddles the
-4-quarter boundary. PCP corroborates the spatial finding from `geo.py` on an
-independent axis. Both hold under either reference series (`--reference
-deaths`, the EB05 analogue, and `--reference mentions`, which is immune to
-panel drift) — and cocaine, the EB05 near-miss that `count_ratio` exposed as a
-growing share of a shrinking total, is nowhere near significant under either.
-
-### But it does not detect earlier than EB05, and the aggregation argument failed
-
-`treescan backtest` runs the same as-of sweep as `trends backtest` on the same
-ground truth, so the only thing that differs is the statistic. EB05 > 1.5 is
-unadjusted while RI ≥ 100 is adjusted for the entire search, so the sweep also
-re-cuts the scan at the threshold that raises **the same number of alarms** —
-85 over the sweep — and that matched-budget column is the fair comparison.
-
-| Substance | First seen | EB05 | Leaf, RI ≥ 100 | Leaf @ matched budget |
-|---|---|---|---|---|
-| para-Fluorofentanyl | 2021Q1 | +1q | **+0q** | +1q |
-| Bromazolam | 2021Q2 | **+11q** | +11q | +12q |
-| Carfentanil | 2017Q2 | +29q | +29q | +29q |
-| Mitragynine | 2017Q4 | **+20q** | never (peak RI 48) | never |
-| Xylazine | 2023Q3 | **+4q** | never (peak RI 13) | never |
-
-At a matched false-alarm budget the tree scan never detects earlier, and it
-misses two of five outright. **EB05's apparent advantage on mitragynine and
-xylazine is bought with an unadjusted threshold** — but the scan does not buy
-anything back with its adjustment either.
-
-Two further negative results worth recording:
-
-- **The aggregation-power argument, which is what motivated the whole thing,
-  did not survive contact with the data.** The nitazene branch never signals:
-  peak LLR 3.38, RI 1. Aggregation helps when members are individually
-  *marginal*; the nitazenes are individually *absent* (1 and 2 mentions in
-  fourteen years), and no amount of pooling creates signal from three cases.
-  Across the whole sweep, branch-only detection — a branch signalling in a
-  quarter when no member leaf did — happens in **3 node-quarters out of 165**.
-- **Branch signals are not attributable by default.** `Fentanyl and
-  Fentanyl-related` fires in 2017Q2, the exact quarter carfentanil first
-  appears in LA, which scores as a 0-quarter detection until you ask how much
-  of the branch's excess carfentanil actually contributes: **1%**. It was
-  fentanyl's own explosion. `excess_share()` computes this and the head-to-head
-  reports it, because without it a large branch containing a rare substance
-  manufactures detections. Only para-fluorofentanyl gets a genuine branch
-  detection (74% attributable, via `Fentanyl analogs`).
-
-**Verdict: it runs alongside EB05, it does not replace it.** What it adds is
-multiplicity-honest inference and window-free detection, which is exactly what
-promoted lidocaine and PCP from "below the line" to "signal". What it does not
-add is earlier warning.
-
-### Reading the two together
-
-EB05 *estimates* and the scan *tests*, so they answer different questions and
-only EB05 can rank (p-values tie at 1.0 for half the catalog) or detect
-declines (the scan is high-rate only). EB05 screens, the scan adjudicates:
-
-| | RI ≥ 100 | RI < 100 |
-|---|---|---|
-| **EB05 > 1.5** | a real signal, defensible to a reviewer | a candidate to watch, not publish — where EB05's unadjusted threshold was doing the work (xylazine, mitragynine) |
-| **EB05 < 1.5** | EB05's fixed window missed it (lidocaine, PCP) | nothing |
-
-Both off-diagonal cells are new information. The bottom-left one is the
-current headline: `trends rank` says nothing clears 1.5, and lidocaine and PCP
-contradict it.
-
-### The tree is where the findings are made or lost
-
-The game plan called for `root → NFLIS category → substance`, on the grounds
-that the category field is already in the data. Building it showed the NFLIS
-categories are a forensic-chemistry filing system, not a pharmacological one:
-
-- `Depressants and Tranquilizers` holds PCP (724 mentions) next to xylazine (9)
-  and zolpidem — PCP is 60% of the node, so any tranq signal drowns.
-- `Narcotic Analgesics` mixes morphine (1,124) with the nitazenes (3 total).
-  The family that motivated a tree scan is 0.1% of its own parent, so
-  aggregating to the NFLIS parent *loses* the signal rather than pooling it.
-- `Other substances` is a 71-member junk drawer holding lidocaine and
-  levamisole alongside atorvastatin and vancomycin.
-
-So `tree.py` keeps the NFLIS categories — they are the published taxonomy and a
-reader can check them — and adds a family layer beside them. Families cross
-category boundaries, which makes the structure a **DAG rather than a tree**;
-nothing in the statistic requires otherwise, since the LLR is computed per node
-and the Monte Carlo maximum absorbs however much the nodes overlap. Nodes whose
-leaf set duplicates another's are dropped, keeping the more specific label.
-
-`python -m emerging.tree check` lists every family member absent from LA, so
-the constant stays a claim about pharmacology rather than a wish list. Absent
-members are kept on purpose: medetomidine is in `Veterinary sedatives` today,
-so the branch already exists the quarter it is first coded.
-
-### Validated against the TreeScan binary
-
-`treescan.py` is a from-scratch implementation, which is a liability until it
-is checked against the reference. `python -m emerging.treescan_validate compare`
-runs both on the same tree and the same counts and reports every difference.
-
-| | strict tree | DAG (production) |
-|---|---|---|
-| Nodes in the search space | 141 both | **155 both** |
-| Cuts compared exactly | 57 | **65** |
-| Max abs LLR difference | 5.0e-07 | **5.0e-07** |
-| Best window identical | 57/57 | **65/65** |
-| Cases in window identical | 57/57 | **65/65** |
-| Max abs p-value difference (9,999 reps each) | 0.0041 | **0.0039** |
-| Same verdict at p = 0.01 | all | all |
-
-5e-07 is TreeScan's printf precision — it writes 6 decimal places, so the LLRs
-are identical to the last digit either program prints. The p-values are two
-independent Monte Carlo runs and agree to within simulation error.
-
-Getting there required matching four settings whose TreeScan defaults differ
-from ours, and each one is a way the comparison could have looked like a
-disagreement while being nothing of the kind:
-
-- `conditional-type=2` (condition on the node), not the shipped example's
-  `NODEANDTIME`.
-- `apply-risk-window-restriction=n`. It defaults to *on* at 20%, silently
-  dropping short windows.
-- `include-identical-parent-cuts=y`, so TreeScan reports the duplicate
-  leaf-set nodes our `_dedupe` removes.
-- `minimum-node-cases=2`. TreeScan will not form a cut from fewer than 2
-  cases — in the node or in the window. This is a property of the *search
-  space*, not of reporting, so leaving ours at 0 would have had our null
-  maximum range over nodes TreeScan never sees.
-
-Two things the comparison found:
-
-- **A real bug in ours.** Metoprolol showed 3 observed against 3.000 expected
-  and an LLR of 3.3e-16 — `c > e` came out true on the last bit of a float. It
-  could never win a maximum, but it put a node with no excess into the
-  positive-LLR list. `_llr` now floors at 1e-9.
-- Substance names break TreeScan's input format. It is comma-delimited with no
-  quoting, so `1,1-Difluoroethane` parses as an extra column; the first run
-  died with "record 17 has node referencing self as parent". The exporter now
-  writes opaque IDs and maps names back.
-
-Also worth recording: the export is checked before it is used. `verify_export`
-recomputes every node's descendant-leaf closure *from the emitted file* and
-requires it to equal our leaf set, so a mistranslated DAG fails loudly instead
-of quietly comparing two different trees.
-
-**Performance** (155 nodes, 125 leaves, 12 quarters, single-threaded):
-
-| Replications | TreeScan (C++) | ours (Python/numpy) |
-|---|---|---|
-| 999 | 2.13 s | 0.43 s |
-| 9,999 | 2.25 s | 3.5 s |
-| 99,999 | 12.4 s | 34 s |
-
-Comparable, with different shapes: TreeScan carries a ~2 s constant and then
-scales well, ours is near-linear at ~0.35 ms per replication. TreeScan also
-uses all cores (99,999 replications in 2.5 s with `--parallel-processes 0`)
-where ours is single-threaded. At the replication counts this project needs,
-neither is a constraint.
-
-### Calibration
-
-The scan produces p-values, so the property that matters is that they mean what
-they say. On null data — every leaf's cases distributed over time exactly as
-the reference series says — the observed rejection rates are 0.050, 0.096,
-0.183 and 0.496 against nominal 0.05, 0.10, 0.20 and 0.50. `tests/
-test_treescan.py::test_null_calibration` asserts this, along with the specific
-way it would break quietly: applying the `min_cases` floor to the observed data
-but not to the simulations.
-
-`tests/test_treescan_parity.py` re-runs the binary comparison as a test. It
-skips when the binary is absent, so it is a no-op for anyone who only has this
-repository, and it is the guard against our implementation drifting away from
-the reference on some later edit.
-
-**One thing the recurrence interval does not cover: repeated looks.** It is the
-multiplicity across nodes and windows *within one analysis*. Running the scan
-every quarter is a further multiplicity, and the game plan's claim that
-TreeScan's RI makes MaxSPRT redundant is only true of the within-analysis part.
-
-## How the expected count is computed
-
-`E_s` = the substance's **share of all overdose deaths in the baseline window**,
-applied to the **recent window's death total**:
-
-```
-E_s = n_baseline_s x (N_recent / N_baseline)
-```
-
-Two fixed adjacent windows, not a fitted trend: recent = the last 4 quarters,
-baseline = the 8 immediately before it. The baseline rolls forward with the
-data, which is what makes this an *emergence* detector — a substance that has
-been high for years does not flag, because its own recent past is the yardstick.
-
-Worked example (lidocaine, current window):
+Each analysis has a findings document — what it concluded, how it was
+calibrated, and which artifacts would have manufactured a false result.
 
 | | |
 |---|---|
-| baseline 2023Q1–2024Q4 | 22 lidocaine deaths / 5,491 OD deaths = **0.401%** |
-| recent 2025Q1–Q4 | 2,153 OD deaths |
-| expected | 0.401% x 2,153 = **8.63** |
-| observed | **17** → raw ratio 1.97 → EBGM 1.47, EB05 1.04 |
+| [Extraction and validation](docs/findings/extract.md) | precision/recall against the ME's coded flags; why coverage is 99.8% |
+| [EB05 ranking](docs/findings/trends.md) | does the ranking work, how the expected count is computed, four caveats that change conclusions |
+| [Tree-temporal scan](docs/findings/treescan.md) | scanning the hierarchy; validation against the TreeScan binary |
+| [Cause or passenger](docs/findings/polysubstance.md) | co-occurrence and position on the cause line |
+| [Spatial localization](docs/findings/geo.md) | is it localized, and the provenance of the method |
+| [Space-time scan](docs/findings/spacetime.md) | where, and is it growing there |
+| [Spatial variation in trends](docs/findings/svtt.md) | where mortality is rising fastest; the Pomona Valley |
+| [Reporting delay](docs/findings/nowcast.md) | how complete the recent quarters are; the correction that is withheld |
+| [Relative-risk surface](docs/findings/relrisk.md) | PCP; three bugs that each produced a plausible wrong map |
 
-### The denominator is deaths, not people — and that matters
-
-This is a **compositional** measure: share of overdose deaths, not a population
-rate. LA's total overdose deaths fell **22%** between the two windows (686/qtr →
-538/qtr), so a substance with perfectly flat absolute counts gains ~1.28x share
-automatically.
-
-The consequence is that "rising" in this table can mean "a larger slice of a
-shrinking pie":
-
-| Substance | deaths/qtr, baseline → recent | absolute change | share ratio | EB05 |
-|---|---|---|---|---|
-| Lidocaine | 2.8 → 4.3 | **1.55x** | 1.97 | 1.04 |
-| PCP | 28.9 → 34.3 | **1.19x** | 1.51 | 1.27 |
-| Cocaine | 126.1 → 113.8 | **0.90x** | 1.15 | 1.06 |
-| Methamphetamine | 416.0 → 336.3 | **0.81x** | 1.03 | 0.98 |
-
-Cocaine clears the "credible growth" bar on share while its actual death count
-*fell*. That is not a bug — share is the right frame for "is the drug supply
-changing" — but **"cocaine is rising" is the wrong sentence.** Say "cocaine is a
-growing share of a shrinking total," and check the absolute column before
-describing any substance as increasing.
-
-## Reading the output — four caveats that change conclusions
-
-**1. Right-truncation is the biggest practical hazard.** Toxicology takes
-months, so the last two quarters are undercounts and every rising substance
-looks like it is falling. `--lag-quarters` (default 2) drops them before any
-statistic is computed, and the figures draw the tail dashed rather than hiding
-it. This is a *floor, not a fix*: novel substances need send-out confirmation
-and so confirm more slowly than fentanyl, meaning delay correlates with exactly
-the thing being detected. Properly handling this needs a reporting triangle —
-LACME would have to supply an adjudication or report date alongside death date.
-**Worth requesting; it is cheap to ask for and currently unavailable.**
-
-Completeness is handled in `load_quarterly`, before any statistic runs, by two
-separate guards:
-
-- **`--cutoff` (default `2025-12-31`)** drops quarters whose toxicology is not
-  yet settled. This is a *data judgement, not a derived quantity* — **advance it
-  by hand when the LACME extract is refreshed** and the newer quarters have had
-  time to adjudicate. Leaving it stale silently shrinks the analysis window.
-- **Partial calendar quarters are always dropped.** The extract ends 2026-04-04,
-  so 2026Q2 is a 4-day stub holding 3 deaths. Left in, it looks like an ordinary
-  quarter to the older `--lag-quarters` haircut and silently absorbs one of its
-  slots, so a "2-quarter" correction discards only one real quarter.
-
-`--lag-quarters` is the older rolling alternative to the cutoff and now defaults
-to **0**: the two express the same correction, and stacking them throws away a
-year of settled data. Use one or the other.
-
-**2. `date_added` is catalog novelty, not street novelty.** It records when
-NFLIS could report a substance. 852 of 3,101 entries (27%) carry the catalog's
-1998-10 inception stamp, including para-fluorofentanyl and carfentanil — both of
-which only reached LA deaths in 2021 and 2024. `date_added_censored` marks these.
-Local arrival (`first_seen`) is the more useful axis, and is itself censored at
-2012 where the extract starts.
-
-The corollary is the shaded region in `novelty_vs_growth.png`. Three substances
-sit below the diagonal, meaning the LA death predates the NFLIS entry:
-**chlorcyclizine** (LA 2012Q3, NFLIS 2023-10), **desloratadine** (LA 2014Q2,
-NFLIS 2023-10), and **U-47700** (a one-month gap, effectively on the line).
-This is not LA detecting something before the DEA. NFLIS catalogues substances
-as forensic labs report them **in seized drug evidence**; the first two are
-prescription antihistamines that turn up in postmortem blood but are not
-trafficked, so they entered the catalog late. The region is a statement about
-NFLIS's sampling frame, not about local surveillance being ahead.
-
-**3. Naming variants can manufacture a fake emergence.** LACME writes both
-`PARA-FLUOROFENTANYL` and a bare `FLUOROFENTANYL`; the second form takes over in
-2023Q2 when the office changed convention. Unrolled, that reads as one substance
-collapsing and another appearing. `ISOMER_ROLLUP` collapses them. Assume more
-cases like this exist and check `unmatched_tokens.csv` when a new substance
-appears to jump.
-
-**4. The prior is single-component, not MGPS.** DuMouchel's two-gamma mixture
-was tried first and is not identifiable here — 203 substances, only 111 with a
-non-zero baseline, cannot pin down five parameters, and the optimizer converged
-to different degenerate solutions depending on the fit set. Details in
-`_fit_gps_prior`. The mixture is worth revisiting on a substance × zip × quarter
-table.
+- [`docs/RESEARCH_LOG.md`](docs/RESEARCH_LOG.md) — current state, game plan, and
+  the artifacts that would have manufactured false results
+- [`docs/LITERATURE_REVIEW.md`](docs/LITERATURE_REVIEW.md) — rare-event detection
+  and spatial clustering methods; what is better than this and what is not
 
 ## What this does not do
 
@@ -557,492 +192,3 @@ table.
   names resolves in the lexicon, so the scan looked and found nothing in the
   narratives — but an assay the ME does not run produces an identical zero.
   Only the ME's panel can separate them.
-
-## Is it a cause of death, or a passenger?
-
-`polysubstance.py`. EB05 measures growth in share; it cannot say whether
-anyone died *of* the substance. Two independent discriminators, over the last
-4 settled quarters:
-
-- **Company kept.** `alone_pct` (deaths naming nothing else) and
-  `with_fentanyl_pct`.
-- **Position on the cause line.** The ME writes one combined string —
-  `EFFECTS OF FENTANYL, METHAMPHETAMINE, AND LIDOCAINE` — ordered by clinical
-  significance, not alphabetically. `lead_pct` is how often the substance is
-  named first, `last_pct` how often it is named last, and `mean_rank_pct` its
-  average position from 0 (always first) to 1 (always last). All three are
-  computed only on multi-substance lines, so a solo mention cannot count as
-  "named first".
-
-| | n (2025) | alone | with fentanyl | 1st | last | mean rank | verdict |
-|---|---|---|---|---|---|---|---|
-| Fentanyl | 1101 | 15% | — | 82% | 9% | 0.13 | principal driver |
-| Cocaine | 455 | 26% | 49% | 44% | 31% | 0.43 | principal driver |
-| Methamphetamine | 1345 | 37% | 49% | 16% | 66% | 0.75 | independent |
-| Alprazolam | 110 | 1% | 75% | 21% | 46% | 0.64 | adulterant/marker |
-| PCP | 137 | 0% | 51% | 2% | 81% | 0.90 | secondary/incidental |
-| **Lidocaine** | **17** | **0%** | **100%** | **0%** | **82%** | **0.93** | **adulterant/marker** |
-
-Lidocaine is a cutting agent. Every one of its 17 recent deaths names
-fentanyl, and the ME writes it **last on the cause line in 14 of 17 and first
-in none** — the mirror image of fentanyl. The right headline is "the fentanyl
-supply is being cut differently", not "lidocaine is killing people".
-
-### Why position is normalized rather than a mean ordinal
-
-A raw mean position (1…N) conflates "named late" with "appears on a long
-line": a substance always named last scores 2 on a two-substance line and 5 on
-a five-substance line. The bias runs the wrong way here — adulterants
-co-occur with more substances and so sit on longer lines, inflating a raw
-ordinal exactly for the class we are trying to identify.
-
-Ranking all 26 substances both ways gives **Spearman 0.79**. Methamphetamine
-is 20th of 26 raw but 7th normalized (short lines, so position 2 of 2 is
-*last*); para-fluorofentanyl is 6th raw but 15th normalized (long lines, so
-2.83 is the middle).
-
-The cost: on a two-substance line the score can only be 0 or 1, so short lines
-push toward the extremes; single-substance lines are undefined and excluded;
-and it is an unweighted mean of ratios. `last_pct` is reported alongside
-because the normalized mean is the right thing to rank on but harder to read.
-
-*A discriminator that was tried and does not work:* which field the substance
-was found in. Lidocaine is 100% `CauseA`, identical to fentanyl — the ME puts
-everything on one line. Position within that line is the signal; presence in
-it is not.
-
-## Alarm history — when did each flag actually fire?
-
-`trends alarms` sweeps every substance across all 45 as-of quarters and
-records the four dates that matter: first LA death, first EB05 > 1.5 breach,
-end of the alarm, and the peak. **24 of 205 substances have ever breached.**
-
-| First breach | Substance | Peak EB05 | Quarters in alarm | Detection delay |
-|---|---|---|---|---|
-| 2020Q1 | Etizolam | 4.49 | 4 | 28q |
-| 2020Q2 | Flualprazolam | 4.84 | 4 | **3q** |
-| 2021Q2 | para-Fluorofentanyl | **7.00** | 8 | **1q** |
-| 2022Q2 | Acetyl fentanyl | 2.82 | 8 | 27q |
-| 2024Q1 | Bromazolam | 4.78 | 5 | 11q |
-| 2024Q3 | Carfentanil | 5.02 | 4 | 29q |
-| 2024Q3 | Xylazine | 1.93 | 1 | 4q |
-| 2024Q4 | Lidocaine | 4.29 | 4 | 12q |
-
-Detection delay is reported **only where arrival is observed.** LACME records
-start 2012Q1, so anything already circulating then has a censored
-`first_seen`; morphine's apparent "53-quarter delay" is the censoring floor,
-not a late catch. Those rows carry `first_seen_censored` and a NaN lag.
-
-## Recording changes that move EB05, without any change in the drug supply
-
-`trends regime`. The statistic is a share, so three things move it for reasons
-that have nothing to do with drugs — and all three are measurable:
-
-1. **Denominator drift — this one is live.** Total OD deaths fell 18% between
-   the current windows (2,619 → 2,153). Every substance holding a flat count
-   gains ×1.22 share for free. This is why `rank` now carries `count_ratio`
-   alongside `eb05`: `count_ratio < 1` with `eb05 > 1` means *a growing share
-   of a shrinking total*, which is true about supply composition and false
-   about deaths. Cocaine is the case in point — EB05 1.06, count ratio 0.90.
-2. **Panel drift — historical, not current.** Substances named per death climbs
-   1.45 (2012) → 1.89 and plateaus around 2020Q1; the last 12 quarters have
-   sd 0.049. Recent flags are not a widening panel, but pre-2020 shares are
-   depressed by narrower testing, which is why the heatmap marks that line.
-3. **Simultaneous onsets.** **7 substances first breached in 2024Q3** —
-   benzylfentanyl, carfentanil, codeine, ephedrine, methocarbamol,
-   mirtazapine, xylazine — in a quarter when deaths fell 19% year over year.
-   Seven unrelated epidemics starting at once is not the parsimonious reading;
-   the denominator is.
-
-## Is it localized?
-
-`geo.py`. A **random-labelling permutation test** on a marked point pattern:
-holding the 7,581 death locations fixed, the null asks which n of them are
-cases. Overdose deaths already concentrate in Skid Row, the Antelope Valley
-and the Harbor, so the comparison is against *n deaths drawn from all overdose
-deaths in the same window*, not against the population — the question is
-whether a substance is more concentrated than overdose death itself. Statistic
-is mean nearest-neighbour distance in metres (UTM 11N), 999 permutations,
-2023–2025.
-
-`localization = null mean NND / observed mean NND`. Raw NND is not comparable
-across substances — it is dominated by n (a random draw of 9 gives 11.4 km, of
-367 gives 1.3 km) — and the ratio cancels that because the null uses the same
-n. Under a Poisson idealization, mean NND scales as 1/√density, so 1.39× closer
-is roughly 1.9× denser.
-
-**3 of 42 substances beat the background at p<0.05** (about 2 expected by
-chance across 42 unadjusted tests, so read the top of the list, not the tail):
-
-| Substance | n | localization | p | top zip |
-|---|---|---|---|---|
-| PCP | 367 | 1.38× | 0.005 | 90013 (Skid Row) |
-| Ketamine | 58 | 1.40× | 0.015 | 91754 |
-| Cocaine | 1454 | 1.09× | 0.015 | 90013 |
-| Lidocaine | 39 | 1.22× | 0.115 | 90057 |
-| Carfentanil | 22 | 0.98× | 0.540 | 91601 |
-| Xylazine | 9 | 0.99× | 0.560 | 90061 |
-
-PCP is the one substantive spatial finding: well powered and tightly bound to
-Skid Row. The flagged novel substances are *not* localized — they track the
-fentanyl supply, which is county-wide.
-
-**Methamphetamine (61% of the cohort) and fentanyl (58%) are withheld, not
-scored.** As the case fraction approaches 1 the random-labelling null draw
-becomes the case set itself, so the test compares the substance against itself
-and returns ≈1 regardless of geography. That is a degenerate question, not a
-null result. `MAX_CASE_FRACTION = 0.25` gates it; the values are still in the
-CSV under `out_of_scope=True` and should not be quoted. Those two need a
-population denominator.
-
-**Power, not just significance.** The smallest localization detectable at
-p<0.05 is ~1.97× at n=9, 1.52× at n=22, 1.25× at n=39, 1.09× at n=367. So
-xylazine's 0.99× is not evidence of dispersion — it is no evidence at all, and
-carfentanil is little better. Below n≈20 a non-significant result is
-uninformative.
-
-### Provenance of the method
-
-This is a **random-labelling test** in the marked-point-process sense, using a
-Clark–Evans-style nearest-neighbour ratio as the summary statistic. The
-closest named ancestor is the **Cuzick–Edwards k-nearest-neighbour test**
-(1990), which is the standard case-control clustering test and uses the same
-label-permutation null; it counts how many of each case's k nearest neighbours
-are also cases, where this uses mean distance to the nearest case. The
-canonical alternative is **Diggle–Chetwynd's** D(s) = K_cases(s) −
-K_controls(s) (1991), and **Kelsall–Diggle / `sparr`** kernel relative-risk
-surfaces are the estimation counterpart.
-
-Why this variant rather than one of those off the shelf: no bandwidth or
-scale-radius to choose (Diggle–Chetwynd needs a range of s, `sparr` needs a
-kernel bandwidth, and at n=9–39 those choices drive the answer), one number
-per substance so 42 of them tabulate, and an exact permutation p-value with no
-asymptotics. What it gives up: Cuzick–Edwards has known power properties and
-this does not, and D(s) reports the *scale* at which clustering occurs where
-this collapses everything to the nearest-neighbour scale. If a substance ever
-becomes the object of a real spatial investigation rather than a triage
-column, use Diggle–Chetwynd or `sparr` on it.
-
-Three data defects this had to control for, all found while building it:
-46 deaths geocoded to **Namibia** (handled by `in_la_county`); **16%** of
-deaths at coordinates shared by ≥5 others — hospitals and jails, where people
-are pronounced rather than where the drug is, reported per substance as
-`pct_at_facility` (amphetamine is 44%, and should be discounted accordingly);
-and 3 Catalina deaths that stretch the map frame.
-
-## Where, and is it growing there?
-
-`geo.py` asks whether a substance is more concentrated than overdose death
-itself, county-wide, over one fixed window. `spacetime.py` asks *where* and
-*when*: circles of zipcodes crossed with trailing quarters, returning the
-single most unlikely cylinder with a p-value adjusted for every cylinder
-searched. 7,572 OD deaths, 280 zips, 12 quarters (2023Q1–2025Q4); circles
-capped at 25% of deaths (≤ 97 zips), windows 1–6 quarters, 999 replicates.
-46 of 157 substances and tree branches are eligible (≥ 20 cases, and ≤ 25% of
-all deaths, the same `MAX_CASE_FRACTION` guard `geo.py` uses).
-
-### Two models, because one cannot answer the question
-
-The **Bernoulli case-control** scan takes cases as deaths naming the substance
-and controls as the other overdose deaths in the same zip and quarter, so the
-denominator stays overdose death itself — the same convention as EB05,
-`treescan.py` and `geo.py`. It measures a substance's local share against its
-share pooled over the whole study period, which means **a concentration that
-has been there for a decade wins as easily as one that appeared last year.**
-
-That is not a subtle problem. It flagged cocaine at 2.07× over a 5-quarter
-window in South LA, which reads as an emerging hotspot and is not one. So the
-second model is Kulldorff's **space-time permutation**, conditioned on the
-substance's own spatial margin *and* its own temporal margin: a busy zip cannot
-win, a busy quarter cannot win, only the interaction can. That is "growing
-here" rather than "concentrated here".
-
-### Concentrated: yes. Growing: no.
-
-| | concentrated (Bernoulli) | growing (interaction) |
-|---|---|---|
-| p ≤ 0.05 | 21 of 46 | 1 of 46 |
-| survives Bonferroni across the 46 scanned | **5** | **0** |
-
-The five that survive everything:
-
-| Substance | n | Cluster | Window | Observed | Expected | Ratio |
-|---|---|---|---|---|---|---|
-| Cocaine | 1,454 | 12 zips around 90011 (South LA + downtown) | 5q | 137 | 66.1 | 2.07× |
-| PCP | 367 | 37 zips around 90002 (Watts) | 4q | 68 | 24.2 | 2.81× |
-| Dissociatives | 429 | 69 zips around 90274 (South Bay) | 5q | 90 | 40.0 | 2.25× |
-| Depressants and Tranquilizers | 481 | 66 zips around 90277 | 5q | 94 | 44.3 | 2.12× |
-| Cutting agents and adulterants | 59 | 42 zips around 90043 | 6q | 22 | 6.4 | 3.42× |
-
-**The spatial structure of the LA supply is real and strong, but static —
-these substances have a geography, not a moving front.** PCP corroborates the
-`geo.py` finding on an independent statistic, and the adulterant family is the
-spatial echo of the lidocaine result.
-
-Had only the Bernoulli model been built, this section would claim the opposite.
-With trailing windows, "recent elevation" and "long-standing concentration"
-produce the same picture unless you condition them apart.
-
-### Multiplicity, again
-
-Each p-value is adjusted for every cylinder searched **within** a substance,
-and not at all for having scanned 46 of them. Read per-substance, the
-interaction model does have a hit: diphenhydramine, p = 0.003, 4 deaths against
-0.44 expected across the affluent Westside (90024, 90049, 90210, 90272 …) over
-3 quarters. Corrected across the 46, that is 0.138. It is not a facility
-artifact — 11% of its deaths are at shared addresses against 15% county-wide —
-and it is not a finding either. `p_across_substances` is a column in
-`spacetime_clusters.csv` so this does not have to be remembered.
-
-Bonferroni is conservative here, because the scanned set contains nested nodes
-(`Dissociatives` contains `PCP`), but it is the statement that cannot be
-accused of over-claiming.
-
-### Calibration and the checks that mattered
-
-Both models have synthetic null calibration tests plus a planted-cluster
-recovery test in `tests/test_spacetime.py`. On the real background, rejection
-rates are 0.075 / 0.113 against nominal 0.05 / 0.10 at C=40, and 0.037 / 0.087
-at C=400 — within Monte Carlo error at the thresholds that drive decisions
-(80 replicate datasets, so sd ≈ 0.024 and 0.034). The body of the distribution
-runs mildly conservative, which errs toward under-claiming.
-
-Two defects found while building, both of the kind that fail silently:
-
-- The observed grid was built with `np.add.at` and the simulated grids with
-  `np.bincount`. They happened to agree, but nothing checked it, and a
-  mismatch would have made every p-value wrong with no error raised. Now
-  asserted before the results are believed.
-- The reported member-zip list was truncated to 12, so the map drew a 12-zip
-  blob for a 69-zip cluster. The statistics were right; the picture was not.
-
-## Where is mortality rising fastest?
-
-`svtt.py` is the one analysis here that uses a population denominator, and the
-only one that tests a **slope** rather than a level. Each circle of zipcodes
-keeps its own baseline rate and is tested only on its trend, so an area that
-has always been bad cannot signal — the objection that made `geo.py`
-case-control, handled inside the model instead of by avoiding the denominator.
-
-The MLE of a log-linear Poisson with a population offset reduces to a
-one-dimensional monotone root find (population-weighted mean time under trend
-`b` must equal case-weighted mean time; the derivative is a variance, so the
-root is unique). That is what makes 23,406 circles affordable without fitting a
-GLM per circle.
-
-### The window matters more than the method
-
-The first run, over 2015–2025, returned a county-wide trend of **+14.5%/yr**.
-That is an artifact. LA's overdose rate is a hump, not a trend:
-
-| 2013 | 2016 | 2019 | 2022 | 2024 | 2025 |
-|---|---|---|---|---|---|
-| 5.3 | 7.6 | 12.7 | **29.5** | 26.2 | 21.7 |
-
-A log-linear fit across all of that describes neither the rise nor the fall,
-and "rising fastest" then conflates *rose earliest during the ramp* with *still
-rising now*. The default window is therefore the **decline phase** (2022–2025,
-county −9.3%/yr, monotone), and `scan` prints the annual rate series it fitted
-so the misspecification cannot recur silently. `--first-year 2015` gives the
-whole-epidemic version if you want it.
-
-### The Pomona Valley is going the other way
-
-| Year | Cluster per 100k | Rest of county |
-|---|---|---|
-| 2022 | 11.5 | 30.0 |
-| 2023 | 12.5 | 28.8 |
-| 2024 | 23.0 | 26.3 |
-| 2025 | 20.4 | 21.7 |
-
-Five zips — 91765 Diamond Bar, 91766/91768 Pomona, 91748 Rowland Heights,
-91789 Walnut — **rising 25.2%/yr while the county falls 9.8%/yr**, p = 0.016
-adjusted for every circle searched.
-
-**It is a catch-up, not a new epicentre.** The cluster started at a third of
-the county rate and converged upward; it is still slightly *below* county
-average in level today. A level-based scan, including a population-denominated
-one, would miss it entirely. That is the case SVTT exists for.
-
-Three caveats to carry with the number:
-
-- **The rise is one year.** 2023→2024 is the whole step and 2025 falls back. A
-  single slope summarises that shape rather than describing it — quote the
-  table, not just the +25%.
-- **The boundary is not stable.** Dropping 2025 moves the top cluster to a
-  broad 58-zip eastern-county region (+7.9% vs −7.9%). Every Pomona zip is in
-  both, so the *region* is robust and the *extent* is not. Say "eastern San
-  Gabriel / Pomona Valley", not five zipcodes.
-- **156 deaths.** Enough for a slope, not enough to subdivide.
-
-### The cluster, profiled — and it is a methamphetamine story
-
-`svtt profile` characterises the most likely cluster against the rest of the
-county, because "a place is rising" is not reportable until you know what is in
-it. For the Pomona cluster:
-
-- **It is Pomona.** 91768 (+19) and 91766 (+16) supply 35 of the 44-death
-  increase; the other three zips contribute 9 between them and are along for
-  the ride via the circle geometry.
-- **A level shift, not a burst** — 2022–23 runs 2–9 deaths a quarter, 2024–25
-  runs 6–17, stepping at 2024Q1 with no reversion.
-- **Not a pronouncement artifact** — 3.8% at shared facility addresses against
-  18.6% county-wide, at 26/27/44/47 distinct addresses across the four years.
-- **No substance drives it** — heroin 1.46×, PCP 1.44×, meth 1.16×, fentanyl
-  0.89×, cocaine 0.74× against county shares. More of the same supply.
-- **Who** — 55% LATINE against 38% county-wide, median age 48 against 44.
-
-Running SVTT per substance separates the two epidemics:
-
-| | county trend | most likely cluster | p |
-|---|---|---|---|
-| Fentanyl | **−16.25%/yr** | 91765, 7 zips, +3.8%/yr | **0.63** |
-| Methamphetamine | **−7.56%/yr** | 91741, 42 zips (Glendora–Azusa–Claremont–Pomona), **+5.98%/yr** | **0.02** |
-
-**Fentanyl is falling uniformly** — no significant spatial variation in its
-trend anywhere in the county. **Methamphetamine is not**: it falls half as fast
-and is *rising* across a broad eastern San Gabriel Valley region containing the
-all-cause cluster. The county-wide decline is fentanyl-led; the eastern-county
-rise is stimulant-involved.
-
-That changes what a response would be. A naloxone-and-test-strip package targets
-the part of the epidemic already receding fastest; the part that is growing has
-no equivalent pharmacological answer.
-
-### What the denominator does and does not fix
-
-`census.py` supplies ACS resident population, 301 LA zips × 2013–2024, and
-every one of the 280 zips holding deaths is covered. But residential population
-is the wrong denominator for a place people travel to: 90013 has 14,891
-residents and a much larger daytime population, so its per-resident rate is
-place-based intensity, not individual risk. A *trend* is more robust to this
-than a level, since the bias has to be changing to matter — and the Pomona
-cluster is suburban, where that assumption is at its strongest. Downtown is
-where it is weakest.
-
-`tests/test_svtt.py` checks the trend MLE against the score equation it solves,
-that the LLR is exactly zero when two areas share a slope but differ 10× in
-level, and that the null is calibrated under a deliberate 5× spread in baseline
-level — the confound a level-based scan would fail.
-
-## How complete are the most recent quarters?
-
-`CUTOFF = 2025-12-31` in `trends.py` is a hand-set date before which toxicology
-is declared settled, applied before any statistic sees the data. It was a
-judgement with nothing behind it. `nowcast.py` measures the thing it guesses at.
-
-LACME carries no report date, only `DeathDate`, so delay cannot be recovered
-from one extract — but it can from two **vintages**. Sweeping death-months at a
-single pull date traces the whole curve, because each month sits at a different
-delay. Of the three overdose extracts, the 2024-08 / 2025-05 pair is usable
-(settled era agrees to 0.2%); the 2025-05 / 2026-04 pair is not (settled era
-moves 3.5%, which is a case-definition change, not delay). `triangle` prints
-that drift for any pair, so the check is never skipped.
-
-| Months elapsed | 0 | 1 | 2 | 3–5 | 6 | 7–8 | 9 | 10+ |
-|---|---|---|---|---|---|---|---|---|
-| % reported | 27 | 66 | 76 | ~79 | 85 | ~90 | 99.5 | ~100 |
-
-The saturating end is independently confirmed in the current era: the 2026-02
-and 2026-04 pulls agree to within 1.4% on every month of 2025Q1–Q2.
-
-### The correction is computed and then withheld
-
-Applied naively, the curve says 2025Q4 is 81% complete (560 observed → ~690),
-2025Q3 is 93%, the cutoff is too late, and the monotone 2025 decline
-(681, 628, 602, 560) is really a decline and rebound (681, 629, 650, 690).
-That would change the project's headline.
-
-It does not survive its own check. The current extract runs at full strength
-through 2026-01 — 198 deaths, in line with every month before it — and then
-drops to **54, 18, 6**. The curve predicts a *ramp* across those months
-(79%, 77%, 66%); what is there is a **cliff**, a 3.7× fall where 1.2× was
-predicted. No smooth accrual process produces that. It is a pull boundary with
-a few fast-closing cases trailing it, which means today's reporting is not the
-process measured in 2024.
-
-`transfer_check` detects this and `estimate` prints the correction marked
-**NOT VALID**, with `curve_transfers=False` in `nowcast_quarters.csv`.
-
-**The practical reading inverts.** The extract looks essentially complete
-through 2026-01, so `CUTOFF = 2025-12-31` is more likely conservative than lax.
-It stays, and nothing downstream changes.
-
-This is the documented failure mode of delay-corrected nowcasting — the CDC's
-provisional overdose counts use the same machinery and are known to miss when
-the regime shifts. Here the regime that shifted was the reporting process, not
-the epidemic.
-
-### What would settle it costs nothing
-
-Two current-era vintages. **Save a dated copy of every future extract.** That
-is the entire fix, and without it this question cannot be reopened no matter
-how much modelling is applied to it.
-
-## The relative-risk surface (PCP)
-
-`geo.py` says PCP is 1.38× more clustered than the overdose background and
-anchors on 90013; `spacetime.py` puts a 2.81× cylinder around 90002. Both are
-summaries — one number, one circle. `relrisk.py` estimates the surface:
-
-    r(x) = log( f(x) / g(x) )
-
-for case density `f` (deaths naming the substance) and control density `g`
-(the other overdose deaths). `r = 0` means "represented here exactly as it is
-county-wide". Same compositional question as the rest of the pipeline,
-answered continuously. Written in Python rather than driving R's `sparr`.
-
-### Bandwidth is chosen, not assumed
-
-`geo.py` rejected kernel methods partly because at small n the bandwidth drives
-the answer — and it does: PCP's peak relative risk runs **3.7× at 1 km to 2.0×
-at 6 km**. So the default comes from **likelihood cross-validation on the
-case/control labels** (Kelsall–Diggle 1995, what `sparr::LSCV.risk` implements),
-which targets the *ratio* rather than either density on its own.
-
-It selects **4.0 km**, and the optimum is flat — 3.5, 4 and 5 km sit within two
-log-likelihood units. That flatness is itself a result: PCP's excess is a broad
-regional gradient, not a hotspot, and the data will not support finer
-structure. `surface` prints the full sensitivity table next to the chosen value
-so the reader sees what the choice bought. Silverman's normal-reference rule
-(4.19 km) is reported for contrast and deliberately not used — it assumes a
-Gaussian cloud, and LA is a 100 km multi-centre sprawl.
-
-### The map and `geo.py` disagree, and both are right
-
-`geo.py` names 90013 (Skid Row) as PCP's top zip. That is the **modal** zip by
-raw count — 23 deaths. By **share of local overdose deaths** the picture is
-different:
-
-| Zip | | OD deaths | PCP | PCP share |
-|---|---|---|---|---|
-| 90044 | South LA | 66 | 10 | 15.2% |
-| 90744 | Wilmington | 49 | 7 | 14.3% |
-| 90806 | Long Beach | 65 | 9 | 13.8% |
-| 90013 | Skid Row | 218 | 23 | 10.6% |
-| — | county-wide | 7,581 | 367 | **4.84%** |
-
-The surface puts the significant excess in a contiguous **South LA → Harbor
-corridor** (90731, 90744, 90732, 90802, 90813, 90044) at about 2.1×, with the
-valleys and the Antelope Valley depleted. Skid Row sits inside an elevated
-downtown region but is not the peak: it has the most PCP deaths because it has
-the most deaths.
-
-12.6% of the county is above the county-wide rate at pointwise p ≤ 0.05. These
-are **pointwise** contours over 41,000 cells with no multiplicity correction —
-read contiguous regions, not pixels, and use `spacetime.py` for a single
-adjusted verdict.
-
-### Three bugs that each produced a plausible wrong map
-
-- **`eps = 1e-12`** floored the log-ratio near −27 wherever a cell had zero
-  cases, so a few empty-desert cells set the colour scale to ±20 and hid the
-  real ±1 range. Replaced with a half-death pseudo-count centred so that
-  `f/g = p_global` gives exactly 0 at any local density. This also regularised
-  the upper tail — bandwidth sensitivity fell from 13.4×–2.0× to 3.7×–2.0×, so
-  a good part of "the bandwidth drives everything" was really this bug.
-- **No low-density mask**, so the ratio was estimated where almost no deaths
-  informed it. Now requires ≥ 5 deaths within one bandwidth.
-- **`gaussian_filter` returns the input dtype**, so an integer count grid comes
-  back truncated and a smoothed density of 0.3 becomes 0. Caught by the
-  calibration test firing at 84% instead of 5%; `log_rr` now coerces.

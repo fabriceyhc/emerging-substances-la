@@ -51,9 +51,9 @@ coordinates at hospitals and jails harmless to the estimator rather than fatal
 to a cross-validated bandwidth.
 
 Usage:
-    python -m emerging.relrisk surface
-    python -m emerging.relrisk surface --substance Cocaine --bandwidth-km 3
-    python -m emerging.relrisk plot
+    emerging relrisk surface
+    emerging relrisk surface --substance Cocaine --bandwidth-km 3
+    emerging relrisk plot
 """
 
 from __future__ import annotations
@@ -68,12 +68,15 @@ import pandas as pd
 import typer
 from scipy.ndimage import gaussian_filter
 
-from emerging.extract import MENTIONS_PATH
-from emerging.geo import CUTOFF, MAX_CASE_FRACTION, SINCE, UTM11N, load_points
-from emerging.paths import FIG_DIR, RESULTS_DIR, ZIPS_PATH
-from emerging.trends import INK, INK_2, MUTED
+from emerging.ingest.extract import MENTIONS_PATH
+from emerging.config import CUTOFF, SINCE
+from emerging.core.spatial import MAX_CASE_FRACTION, UTM11N, load_points
+from emerging.paths import ZIPS_PATH, results_dir
+from emerging.viz import INK, INK_2, MUTED
 
 app = typer.Typer(add_completion=False)
+
+RESULTS_DIR = results_dir("relrisk")
 
 CELL_M = 500.0             # grid resolution
 N_PERM = 499
@@ -340,9 +343,9 @@ def surface(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = substance.lower().replace(" ", "_")
-    sens.to_csv(out_dir / f"relrisk_{tag}_bandwidth.csv", index=False)
-    by_zip.to_csv(out_dir / f"relrisk_{tag}_zip.csv")
-    np.savez_compressed(out_dir / f"relrisk_{tag}_surface.npz",
+    sens.to_csv(out_dir / f"{tag}_bandwidth.csv", index=False)
+    by_zip.to_csv(out_dir / f"{tag}_zip.csv")
+    np.savez_compressed(out_dir / f"{tag}_surface.npz",
                         log_rr=r.astype(np.float32), p=p.astype(np.float32),
                         inside=inside, extent=np.array(grid.extent),
                         bandwidth_km=h, substance=substance)
@@ -358,18 +361,18 @@ def surface(
 def plot(
     substance: str = typer.Option(DEFAULT_SUBSTANCE, "--substance"),
     results_dir: Path = typer.Option(RESULTS_DIR, "--results-dir"),
-    fig_dir: Path = typer.Option(FIG_DIR, "--fig-dir"),
+    fig_dir: Path = typer.Option(RESULTS_DIR, "--fig-dir"),
 ) -> None:
     """Map the surface, its tolerance contour, and the bandwidth sensitivity."""
     import geopandas as gpd
     from matplotlib.colors import TwoSlopeNorm
 
     tag = substance.lower().replace(" ", "_")
-    d = np.load(results_dir / f"relrisk_{tag}_surface.npz", allow_pickle=False)
+    d = np.load(results_dir / f"{tag}_surface.npz", allow_pickle=False)
     r, p, inside = d["log_rr"], d["p"], d["inside"]
     extent = tuple(d["extent"])
     h = float(d["bandwidth_km"])
-    sens = pd.read_csv(results_dir / f"relrisk_{tag}_bandwidth.csv")
+    sens = pd.read_csv(results_dir / f"{tag}_bandwidth.csv")
 
     zips = gpd.read_file(ZIPS_PATH).to_crs(UTM11N)
     shown = np.where(inside, r, np.nan)
@@ -421,7 +424,7 @@ def plot(
              fontsize=7.6, color=MUTED, va="bottom", wrap=True)
     fig.tight_layout(rect=(0, 0.075, 1, 1))
     fig_dir.mkdir(parents=True, exist_ok=True)
-    out = fig_dir / f"relrisk_{tag}.png"
+    out = fig_dir / f"{tag}.png"
     fig.savefig(out, dpi=160)
     plt.close(fig)
     typer.echo(f"wrote {out}")

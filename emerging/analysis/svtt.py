@@ -60,9 +60,9 @@ county's overall rise and only destroys spatial variation *in the slope*.
     a spurious rate change.
 
 Usage:
-    python -m emerging.svtt scan
-    python -m emerging.svtt scan --substance PCP
-    python -m emerging.svtt plot
+    emerging svtt scan
+    emerging svtt scan --substance PCP
+    emerging svtt plot
 """
 
 from __future__ import annotations
@@ -76,13 +76,16 @@ import numpy as np
 import pandas as pd
 import typer
 
-from emerging.census import load_population
-from emerging.extract import MENTIONS_PATH
-from emerging.geo import CUTOFF, UTM11N, load_points
-from emerging.paths import FIG_DIR, RESULTS_DIR, ZIPS_PATH
-from emerging.trends import BLUE, INK, INK_2, MUTED, ORANGE
+from emerging.ingest.census import load_population
+from emerging.ingest.extract import MENTIONS_PATH
+from emerging.config import CUTOFF
+from emerging.core.spatial import UTM11N, load_points
+from emerging.paths import ZIPS_PATH, results_dir
+from emerging.viz import INK, INK_2, MUTED, ORANGE
 
 app = typer.Typer(add_completion=False)
+
+RESULTS_DIR = results_dir("svtt")
 
 # LA's overdose rate is a hump, not a trend: 5.3 per 100k in 2013, peaking at
 # 29.5 in 2022, down to 21.7 in 2025. A log-linear fit across the whole of that
@@ -99,7 +102,7 @@ N_PERM = 999
 NEWTON_ITERS = 24
 MIN_CASES_IN = 25          # a slope through fewer cases, over 4 years, is noise
 
-SCAN_PATH = RESULTS_DIR / "svtt_clusters.csv"
+SCAN_PATH = RESULTS_DIR / "clusters.csv"
 
 
 def _fit_beta(C: np.ndarray, TC: np.ndarray, P: np.ndarray,
@@ -334,8 +337,8 @@ def scan(
         })
     out = pd.DataFrame(rows)
     out_dir.mkdir(parents=True, exist_ok=True)
-    name = ("svtt_clusters.csv" if not substance
-            else f"svtt_clusters_{substance.lower().replace(' ', '_')}.csv")
+    name = ("clusters.csv" if not substance
+            else f"clusters_{substance.lower().replace(' ', '_')}.csv")
     out.to_csv(out_dir / name, index=False)
 
     typer.echo(f"\nmost likely cluster: p = {p_value:.4f} "
@@ -348,7 +351,7 @@ def scan(
 @app.command("profile")
 def profile(
     results_dir: Path = typer.Option(RESULTS_DIR, "--results-dir"),
-    name: str = typer.Option("svtt_clusters.csv", "--name"),
+    name: str = typer.Option("clusters.csv", "--name"),
     mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
     first_year: int = typer.Option(FIRST_YEAR, "--first-year"),
     out_dir: Path = typer.Option(RESULTS_DIR, "--out-dir"),
@@ -361,7 +364,7 @@ def profile(
     answers all three against the rest of the county, so the cluster can be
     reported rather than just located.
     """
-    from emerging.cohort import filter_alcohol_only
+    from emerging.ingest.cohort import filter_alcohol_only
     from emerging.paths import LACME_PATH
 
     res = pd.read_csv(results_dir / name)
@@ -438,15 +441,15 @@ def profile(
                f"county {o['Age'].median():.0f}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    subs.to_csv(out_dir / "svtt_cluster_substances.csv", index=False)
+    subs.to_csv(out_dir / "cluster_substances.csv", index=False)
     typer.echo(f"\nwrote {out_dir / 'svtt_cluster_substances.csv'}")
 
 
 @app.command("plot")
 def plot(
     results_dir: Path = typer.Option(RESULTS_DIR, "--results-dir"),
-    fig_dir: Path = typer.Option(FIG_DIR, "--fig-dir"),
-    name: str = typer.Option("svtt_clusters.csv", "--name"),
+    fig_dir: Path = typer.Option(RESULTS_DIR, "--fig-dir"),
+    name: str = typer.Option("clusters.csv", "--name"),
 ) -> None:
     """Map the most likely trend cluster and plot its rate against the county."""
     import geopandas as gpd
@@ -515,7 +518,7 @@ def plot(
              fontsize=7.6, color=MUTED, va="bottom", wrap=True)
     fig.tight_layout(rect=(0, 0.075, 1, 1))
     fig_dir.mkdir(parents=True, exist_ok=True)
-    out = fig_dir / "svtt.png"
+    out = fig_dir / "trends.png"
     fig.savefig(out, dpi=160)
     plt.close(fig)
     typer.echo(f"wrote {out}")

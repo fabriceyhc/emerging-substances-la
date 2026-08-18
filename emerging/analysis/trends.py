@@ -54,10 +54,10 @@ Four figures, written to results/figures/:
     known_emergences.png   the backtest set
 
 Usage:
-    python -m emerging.trends rank
-    python -m emerging.trends rank --recent-quarters 8 --top 30
-    python -m emerging.trends backtest
-    python -m emerging.trends plot
+    emerging trends rank
+    emerging trends rank --recent-quarters 8 --top 30
+    emerging trends backtest
+    emerging trends plot
 """
 
 from __future__ import annotations
@@ -71,38 +71,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import typer
-from matplotlib.colors import LinearSegmentedColormap, PowerNorm
+from matplotlib.colors import PowerNorm
 from scipy.optimize import minimize
 from scipy.special import gammaln
 from scipy.stats import gamma as gamma_dist
 
-from emerging.extract import MENTIONS_PATH, load_cohort
-from emerging.paths import FIG_DIR, RESULTS_DIR
+from emerging.config import (BASELINE_QUARTERS, CUTOFF, LAG_QUARTERS,
+                             RECENT_QUARTERS)
+from emerging.ingest.extract import MENTIONS_PATH, load_cohort
+from emerging.paths import results_dir
+from emerging.viz import BLUE, INK, INK_2, MUTED, ORANGE, SEQ, YELLOW
 
 app = typer.Typer(add_completion=False)
 
-
-# Validated categorical palette (dataviz skill reference instance; checked with
-# scripts/validate_palette.js --mode light: all checks pass, contrast WARN
-# relieved by direct labels on every mark).
-BLUE, ORANGE, AQUA, YELLOW = "#2a78d6", "#eb6834", "#1baf7a", "#eda100"
-INK, INK_2, MUTED = "#0b0b0b", "#52514e", "#b8b7b2"
-SEQ = LinearSegmentedColormap.from_list("seq_blue", ["#f2f6fc", "#2a78d6", "#12365f"])
-
-# Hard completeness cutoff: quarters ending after this date are dropped before
-# anything is computed. Toxicology through end-2025 is considered settled;
-# 2026 is not. This is a *data judgement*, not a derived quantity — advance it
-# by hand when the LACME extract is refreshed and the newer quarters have had
-# time to adjudicate.
-CUTOFF = "2025-12-31"
-
-# Additional reporting-lag haircut, in quarters, applied on top of the cutoff.
-# Defaults to 0 because `CUTOFF` already encodes the settledness judgement —
-# these are two ways of expressing the same correction, and stacking them
-# discards a year of settled data. Set it only if you drop the cutoff.
-LAG_QUARTERS = 0
-RECENT_QUARTERS = 4
-BASELINE_QUARTERS = 8
+RESULTS_DIR = results_dir("trends")
 
 # Dated LA-local emergences used as the backtest ground truth. Only
 # para-fluorofentanyl is well powered; the rest are shown for honesty about how
@@ -896,7 +878,7 @@ def _panel(ax, x, y, title: str, color: str, first_seen=None,
 @app.command("plot")
 def plot(
     mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
-    out_dir: Path = typer.Option(FIG_DIR, "--out-dir"),
+    out_dir: Path = typer.Option(RESULTS_DIR, "--out-dir"),
     lag_quarters: int = typer.Option(LAG_QUARTERS, "--lag-quarters"),
     cutoff: str = typer.Option(CUTOFF, "--cutoff",
                                help="Drop quarters ending after this date"),

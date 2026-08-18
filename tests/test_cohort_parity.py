@@ -25,7 +25,7 @@ import inspect
 
 import pytest
 
-from emerging import cohort
+from emerging.ingest import cohort
 
 upstream = pytest.importorskip(
     "rosla_nowcast.modeling.zipcode.monthly.signal_check.ccf",

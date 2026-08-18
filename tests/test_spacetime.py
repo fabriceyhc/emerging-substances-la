@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from emerging import spacetime as st
+from emerging.analysis import spacetime as st
 
 
 def _toy(n_zip: int = 16, n_q: int = 12, per_cell: int = 4, seed: int = 0):

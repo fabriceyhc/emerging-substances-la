@@ -63,9 +63,9 @@ Power is thin and the output says so. At n=10 this test detects only extreme
 localization; a non-significant result is not evidence of dispersion.
 
 Usage:
-    python -m emerging.geo cluster
-    python -m emerging.geo cluster --since 2022-01-01 --min-n 6
-    python -m emerging.geo plot
+    emerging geo cluster
+    emerging geo cluster --since 2022-01-01 --min-n 6
+    emerging geo plot
 """
 
 from __future__ import annotations
@@ -80,78 +80,19 @@ import pandas as pd
 import typer
 from scipy.spatial import cKDTree
 
-from emerging.extract import MENTIONS_PATH, load_cohort
-from emerging.paths import FIG_DIR, RESULTS_DIR, ZIPS_PATH
+from emerging.config import CUTOFF, SINCE
+from emerging.ingest.extract import MENTIONS_PATH
+from emerging.core.spatial import MAX_CASE_FRACTION, UTM11N, load_points
+from emerging.paths import ZIPS_PATH, results_dir
+from emerging.viz import INK, INK_2, MUTED, ORANGE
 
 app = typer.Typer(add_completion=False)
 
+RESULTS_DIR = results_dir("geo")
 
-# LA County in UTM zone 11N. Metres, so nearest-neighbour distances are
-# directly interpretable and no great-circle correction is needed at this
-# extent.
-UTM11N = "EPSG:32611"
 
-CUTOFF = "2025-12-31"
-SINCE = "2023-01-01"     # case-control window; the era the flags come from
 N_PERM = 999
 MIN_N = 8
-FACILITY_MIN = 5         # coords shared by >= this many deaths are facilities
-
-# Above this share of the cohort, the test stops being interpretable and the
-# result is withheld rather than printed. Under random labelling the null is
-# "which n of these N deaths are cases is arbitrary", so as n/N approaches 1
-# the null draw becomes the case set itself and the contrast vanishes. It is
-# not bias — the statistic is still unbiased — it is that the question
-# "is this substance more clustered than overdose death?" degenerates when the
-# substance *is* most of overdose death. Methamphetamine is 61% of the cohort
-# and fentanyl 58%; both need a population denominator, not a case-control one.
-MAX_CASE_FRACTION = 0.25
-
-BLUE, ORANGE, AQUA, YELLOW = "#2a78d6", "#eb6834", "#1baf7a", "#eda100"
-INK, INK_2, MUTED = "#0b0b0b", "#52514e", "#b8b7b2"
-
-
-def load_points(
-    mentions_path: Path = MENTIONS_PATH, since: str = SINCE,
-    cutoff: str = CUTOFF,
-) -> tuple[pd.DataFrame, pd.Series]:
-    """Return (projected background OD deaths, case -> substance set)."""
-    import geopandas as gpd
-
-    co = load_cohort()
-    co = co[(co["death_date"] >= pd.Timestamp(since))
-            & (co["death_date"] <= pd.Timestamp(cutoff))]
-
-    n_before = len(co)
-    co = co[co["in_la_county"].fillna(False).astype(bool)]
-    co = co.dropna(subset=["lat", "lon"])
-    if n_before - len(co):
-        typer.echo(f"dropped {n_before - len(co)} deaths outside LA County or "
-                   "without coordinates")
-
-    g = gpd.GeoDataFrame(
-        co, geometry=gpd.points_from_xy(co["lon"], co["lat"]), crs="EPSG:4326"
-    ).to_crs(UTM11N)
-    bg = pd.DataFrame({
-        "CaseNumber": g["CaseNumber"].to_numpy(),
-        "x": g.geometry.x.to_numpy(), "y": g.geometry.y.to_numpy(),
-        "lon": co["lon"].to_numpy(), "lat": co["lat"].to_numpy(),
-        # ZIPCODE arrives as a float, so a plain astype(str) yields "90013.0".
-        "zip": pd.to_numeric(co["ZIPCODE"], errors="coerce")
-                 .astype("Int64").astype(str).to_numpy(),
-    })
-
-    # Facility flag: coordinates shared by many deaths are hospitals, jails and
-    # treatment centres, not drug geography.
-    dup = bg.groupby(["x", "y"])["CaseNumber"].transform("size")
-    bg["at_facility"] = dup >= FACILITY_MIN
-
-    m = pd.read_parquet(mentions_path)
-    m = m[~m["is_class_term"].fillna(False)].copy()
-    m["s"] = m["rollup"].fillna(m["canonical"])
-    m = m[m["CaseNumber"].isin(set(bg["CaseNumber"]))]
-    sets = m.drop_duplicates(["CaseNumber", "s"]).groupby("s")["CaseNumber"].apply(set)
-    return bg, sets
 
 
 def _mean_nnd(xy: np.ndarray) -> float:
@@ -225,7 +166,7 @@ def cluster(
     res = (pd.DataFrame(rows).set_index("substance")
            .sort_values("p_clustered"))
     out_dir.mkdir(parents=True, exist_ok=True)
-    res.to_csv(out_dir / "geo_clustering.csv")
+    res.to_csv(out_dir / "clustering.csv")
 
     # County-wide facility rate, as the reference for pct_at_facility.
     fac = 100 * float(bg["at_facility"].mean())
@@ -267,7 +208,7 @@ def cluster(
 @app.command("plot")
 def plot(
     mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
-    out_dir: Path = typer.Option(FIG_DIR, "--out-dir"),
+    out_dir: Path = typer.Option(RESULTS_DIR, "--out-dir"),
     since: str = typer.Option(SINCE, "--since"),
     cutoff: str = typer.Option(CUTOFF, "--cutoff"),
     # Default set pairs the two substances that pass the test (PCP, ketamine)
@@ -366,7 +307,7 @@ def plot(
              fontsize=8, color=INK_2, ha="left")
     fig.tight_layout(rect=(0, 0.015, 1, 0.94))
     out_dir.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_dir / "geo_clusters.png", dpi=150, bbox_inches="tight",
+    fig.savefig(out_dir / "clusters.png", dpi=150, bbox_inches="tight",
                 facecolor="white")
     plt.close(fig)
     typer.echo(f"wrote {out_dir / 'geo_clusters.png'}")

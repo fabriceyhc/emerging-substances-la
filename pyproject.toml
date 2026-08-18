@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "emerging-substances-la"
 version = "0.1.0"
 description = "Detecting emerging substances in LA County overdose deaths from medical-examiner narratives"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "pandas>=2.0",
     "numpy>=1.24",
@@ -16,10 +16,15 @@ dependencies = [
     "typer>=0.9",
     "geopandas>=0.14",
     "shapely>=2.0",
+    "docent>=0.1.78",
 ]
 
+[project.scripts]
+emerging = "emerging.cli:app"
+
 [tool.setuptools]
-packages = ["emerging"]
+packages = ["emerging", "emerging.ingest", "emerging.core",
+            "emerging.analysis", "emerging.validation"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

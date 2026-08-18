@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from emerging import nowcast as nc
+from emerging.analysis import nowcast as nc
 
 
 def _write(tmp_path, name, counts: dict[str, int]):

@@ -40,9 +40,9 @@ would make the two node lists disagree for a reason unrelated to the statistic.
 
 Usage:
 
-    python -m emerging.treescan_validate compare
-    python -m emerging.treescan_validate compare --tree-mode strict
-    python -m emerging.treescan_validate compare --n-sim 9999
+    emerging treescan_validate compare
+    emerging treescan_validate compare --tree-mode strict
+    emerging treescan_validate compare --n-sim 9999
 """
 
 from __future__ import annotations
@@ -54,16 +54,18 @@ from pathlib import Path
 import pandas as pd
 import typer
 
-from emerging.extract import MENTIONS_PATH
-from emerging.paths import RESULTS_DIR, ROOT
-from emerging.tree import Node, _dedupe
-from emerging.treescan import (MAX_WINDOW, STUDY_QUARTERS, prepare, run_scan)
+from emerging.ingest.extract import MENTIONS_PATH
+from emerging.paths import ROOT, results_dir
+from emerging.core.tree import Node, _dedupe
+from emerging.analysis.treescan import (MAX_WINDOW, STUDY_QUARTERS, prepare, run_scan)
 
 app = typer.Typer(add_completion=False)
 
-TREESCAN_BIN = ROOT / "treescan" / "treescan64"
-WORK_DIR = ROOT / "treescan" / "work"
-REPORT_PATH = RESULTS_DIR / "treescan_vs_reference.csv"
+RESULTS_DIR = results_dir("treescan")
+
+TREESCAN_BIN = ROOT / "vendor" / "treescan" / "treescan64"
+WORK_DIR = ROOT / "vendor" / "treescan" / "work"
+REPORT_PATH = RESULTS_DIR / "vs_reference.csv"
 
 # Tolerances. The LLR is a deterministic function of integer counts and a
 # rational expectation, so anything above printf noise is a real disagreement;

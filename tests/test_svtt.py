@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from emerging import svtt
+from emerging.analysis import svtt
 
 
 def _t(T: int) -> np.ndarray:

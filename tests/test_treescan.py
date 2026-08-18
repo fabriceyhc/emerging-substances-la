@@ -14,7 +14,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from emerging import tree, treescan
+from emerging.analysis import treescan
+from emerging.core import tree
 
 
 def _toy(n_leaves: int = 12, n_q: int = 12, seed: int = 0):

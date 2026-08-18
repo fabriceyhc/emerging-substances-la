@@ -6,7 +6,7 @@ command is run from there.
     data/raw/nflis/    DEA NFLIS substance catalog
     data/raw/_geo/     LA County zipcode boundaries
     data/processed/    written by `extract`     -- NOT IN GIT
-    results/           tables and figures       -- in git, aggregate only
+    results/<analysis>/  tables and figures     -- in git, aggregate only
 
 **The LACME extract is gitignored and must stay that way.** It contains
 decedent names. It is copied into `data/raw/lacme/` so the pipeline runs out
@@ -15,7 +15,7 @@ and nothing here should ever be changed to commit it.
 
 `data/processed/` is also gitignored — the mentions table is one row per
 decedent per substance, keyed by case number. It is cheap to regenerate
-(`lexicon build` then `extract extract`, about a minute) and does not belong
+(`emerging lexicon build` then `emerging extract extract`, about a minute) and does not belong
 in version control.
 
 What *is* committed: the NFLIS catalog and the zipcode boundaries, both public,
@@ -39,4 +39,26 @@ NFLIS_PATH = RAW_DIR / "nflis" / "NFLIS-Substances_Excel_20260520-222324728.csv"
 ZIPS_PATH = RAW_DIR / "_geo" / "zipcodes.geojson"
 
 RESULTS_DIR = ROOT / "results"
-FIG_DIR = RESULTS_DIR / "figures"
+
+
+def results_dir(analysis: str) -> Path:
+    """The output directory for one analysis, created on demand.
+
+    `results/` is the surface this project is reviewed from -- the tables and
+    figures are what get checked for reasonableness -- so it is organised one
+    directory per module, named after the module. `results/svtt/` pairs with
+    `emerging/svtt.py`, `tests/test_svtt.py` and `docs/findings/svtt.md`.
+
+    Figures live beside the tables that produced them rather than in a separate
+    `figures/` tree: splitting on medium meant checking a figure against its
+    own numbers took two directories. That is why there is no longer a
+    `FIG_DIR`.
+
+    The per-substance scans (`relrisk surface --substance`, `svtt scan
+    --substance`, `treescan scan --reference`) template their filenames, so the
+    old flat directory grew a new file into the same namespace on every run.
+    Scoping them under their analysis keeps that growth legible.
+    """
+    d = RESULTS_DIR / analysis
+    d.mkdir(parents=True, exist_ok=True)
+    return d

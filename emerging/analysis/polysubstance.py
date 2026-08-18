@@ -52,9 +52,9 @@ Verdicts are heuristic and stated as such: `principal driver`, `independent`,
 table, not a toxicological finding.
 
 Usage:
-    python -m emerging.polysubstance profile
-    python -m emerging.polysubstance profile --quarters 8 --top 30
-    python -m emerging.polysubstance plot
+    emerging polysubstance profile
+    emerging polysubstance profile --quarters 8 --top 30
+    emerging polysubstance plot
 """
 
 from __future__ import annotations
@@ -68,25 +68,20 @@ import numpy as np
 import pandas as pd
 import typer
 
-from emerging.extract import MENTIONS_PATH, TEXT_FIELDS, load_cohort
-from emerging.paths import FIG_DIR, RESULTS_DIR
-from emerging.lexicon import MAX_NGRAM, load_lexicon, tokenize
+from emerging.config import CUTOFF, RECENT_QUARTERS
+from emerging.ingest.extract import MENTIONS_PATH, TEXT_FIELDS, load_cohort
+from emerging.paths import results_dir
+from emerging.ingest.lexicon import MAX_NGRAM, load_lexicon, tokenize
+from emerging.viz import AQUA, BLUE, INK, INK_2, MUTED, ORANGE
 
 app = typer.Typer(add_completion=False)
 
-PROFILE_PATH = RESULTS_DIR / "polysubstance_profile.csv"
+RESULTS_DIR = results_dir("polysubstance")
 
-# Shared with trends.py. Duplicated rather than imported to keep the dependency
-# one-way (trends -> nothing here), but they must agree: the window this
-# profiles is the window the ranking scores.
-CUTOFF = "2025-12-31"
-RECENT_QUARTERS = 4
+PROFILE_PATH = RESULTS_DIR / "profile.csv"
 
 # Below this many cases in the window the percentages are not worth printing.
 MIN_CASES = 4
-
-BLUE, ORANGE, AQUA, YELLOW = "#2a78d6", "#eb6834", "#1baf7a", "#eda100"
-INK, INK_2, MUTED = "#0b0b0b", "#52514e", "#b8b7b2"
 
 # Verdict thresholds. Deliberately coarse — these separate obvious cases and
 # leave everything else in the middle bucket rather than pretending to resolve
@@ -246,8 +241,15 @@ def profile_table(
             "top_partners": "; ".join(top),
         })
 
+    # Substance name breaks ties on n_cases. Without it the row order for tied
+    # counts is whatever `rows` happened to be built in, which varies run to
+    # run (the co-occurrence sets upstream iterate in string-hash order), so
+    # the committed CSV reshuffled on every regeneration and a git diff could
+    # not distinguish a real change from noise. `kind="stable"` alone is not
+    # enough -- it preserves an order that was itself arbitrary.
     return (pd.DataFrame(rows).set_index("substance")
-            .sort_values("n_cases", ascending=False))
+            .sort_index()
+            .sort_values("n_cases", ascending=False, kind="stable"))
 
 
 @app.command("profile")
@@ -283,7 +285,7 @@ def profile(
 @app.command("plot")
 def plot(
     mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
-    out_dir: Path = typer.Option(FIG_DIR, "--out-dir"),
+    out_dir: Path = typer.Option(RESULTS_DIR, "--out-dir"),
     cutoff: str = typer.Option(CUTOFF, "--cutoff"),
     quarters: int = typer.Option(RECENT_QUARTERS, "--quarters"),
     min_cases: int = typer.Option(MIN_CASES, "--min-cases"),
@@ -395,7 +397,7 @@ def plot(
         "adulterant marker, not a killer.",
         fontsize=11, color=INK, x=0.008, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.93))
-    fig.savefig(out_dir / "polysubstance.png", dpi=150, bbox_inches="tight",
+    fig.savefig(out_dir / "profile.png", dpi=150, bbox_inches="tight",
                 facecolor="white")
     plt.close(fig)
     typer.echo(f"wrote {out_dir / 'polysubstance.png'}")

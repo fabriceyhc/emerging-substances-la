@@ -53,9 +53,9 @@ correction for no gain.
 
 Usage:
 
-    python -m emerging.tree show
-    python -m emerging.tree show --level family
-    python -m emerging.tree check
+    emerging tree show
+    emerging tree show --level family
+    emerging tree check
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 import typer
 
-from emerging.extract import MENTIONS_PATH
+from emerging.ingest.extract import MENTIONS_PATH
 
 app = typer.Typer(add_completion=False)
 
