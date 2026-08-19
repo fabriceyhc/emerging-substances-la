@@ -93,13 +93,18 @@ alongside it, not as a replacement.
 | eb05-v2 (#1+#2+#3) | **11/22** | 0.34 | 0.79 | 0.79 [0.52, 0.92] | 0.28 | **1.27** | 71 | 0 |
 | eb05-v2-role (#1 ext.+#2+#3, candidate) | **11/22** | 0.34 | **0.85** | **0.85 [0.58, 0.96]** | 0.30 | 1.36 | 69 | 0 |
 | eb05-weighted-role (#1, extended) | **12/22** | 0.28 | **0.86** | **0.86 [0.60, 0.96]** | 0.24 | 1.67 | 59 | 0 |
-| treescan (P1, solo) | 8/22 | 0.32 | 0.73 | 0.73 [0.43, 0.90] | 0.27 | 1.12 | 79 | 1 |
+| treescan (P1, solo, leaves only) | 8/22 | 0.32 | 0.73 | 0.73 [0.43, 0.90] | 0.27 | 1.12 | 79 | 1 |
+| treescan-branch (branches, unguarded) | 12/22 | 0.39 | 0.40 | 0.63 [0.41, 0.81] | 0.23 | 2.92 | **389** | 56 |
+| treescan-branch-attr (branches, share ≥ 15%) | 10/22 | 0.34 | 0.70 | 0.77 [0.50, 0.92] | 0.27 | 2.10 | 105 | 7 |
+| **treescan-tree (leaves + attributed branches)** | 11/22 | **0.44** | 0.70 | 0.73 [0.48, 0.89] | **0.34** | 1.64 | 121 | 7 |
 | ensemble-mean (eb05-dual + treescan, rank) | 15/22 | 0.94 | 0.43 | 0.68 [0.47, 0.84] | 0.40 | 0.13 | 1585 | 94 |
 | ensemble-max (eb05-dual + treescan, rank) | 15/22 | 0.98 | 0.41 | 0.68 [0.47, 0.84] | 0.40 | 0.00 | 1811 | 127 |
 | ensemble-threshold (eb05-dual OR treescan) | 14/22 | 0.42 | 0.70 | 0.70 [0.48, 0.85] | 0.31 | 1.71 | 96 | 2 |
 | ensemble-threshold-ratio (+ ratio) | 15/22 | 0.71 | 0.44 | 0.68 [0.47, 0.84] | 0.34 | 0.73 | 894 | 94 |
 | ensemble-veto-2 (eb05-dual, treescan vetoes < RI 2) | 14/22 | 0.36 | **0.78** | **0.78 [0.55, 0.91]** | 0.28 | 1.79 | 73 | **0** |
 | ensemble-veto-10 (eb05-dual, treescan vetoes < RI 10) | 12/22 | 0.33 | 0.80 | 0.80 [0.55, 0.93] | 0.27 | 1.75 | 68 | **0** |
+| ensemble-veto-tree-2 (eb05-dual, treescan-tree vetoes < RI 2) | 14/22 | 0.36 | **0.78** | **0.78 [0.55, 0.91]** | 0.28 | 1.79 | 73 | **0** |
+| ensemble-veto-tree-10 (eb05-dual, treescan-tree vetoes < RI 10) | 12/22 | 0.33 | 0.80 | 0.80 [0.55, 0.93] | 0.28 | 1.67 | 69 | **0** |
 
 **The rank-based ensembles' fixed-line numbers are not meaningful, and the
 table above is what demonstrates it, not just a caveat about it** — mean/max
@@ -122,12 +127,17 @@ below for what these rows actually show.
 | eb05-v2-role (candidate) | 1.39 | 12/22 | 0.37 | 0.79 | 0.80 [0.55, 0.93] | 0.31 | 1.42 | 4 |
 | eb05-weighted-role | 1.24 | 13/22 | 0.37 | 0.76 | 0.76 [0.53, 0.90] | 0.30 | 1.69 | 6 |
 | treescan | RI 60.2 | 8/22 | 0.36 | 0.67 | 0.67 [0.39, 0.86] | 0.28 | 1.00 | 1 |
+| treescan-branch | RI 10,000 (uncuttable) | 12/22 | 0.31 | 0.50 | 0.63 [0.41, 0.81] | 0.19 | 3.17 | 30 |
+| treescan-branch-attr | RI 500 | 9/22 | 0.30 | 0.67 | 0.75 [0.47, 0.91] | 0.25 | 2.11 | 3 |
+| **treescan-tree** | RI 3,333 | 10/22 | 0.36 | 0.77 | 0.77 [0.50, 0.92] | 0.30 | 1.60 | 2 |
 | ensemble-mean | rank 0.98 | 9/22 | 0.30 | 0.67 | 0.69 [0.42, 0.87] | 0.24 | 1.33 | 2 |
 | ensemble-max | rank 0.99 | 11/22 | 0.33 | 0.69 | 0.73 [0.48, 0.89] | 0.26 | 1.73 | 3 |
 | ensemble-threshold | 1.25× | 12/22 | 0.38 | 0.80 | 0.80 [0.55, 0.93] | 0.32 | 1.58 | 1 |
 | ensemble-threshold-ratio | 4.80× | 11/22 | 0.37 | 0.74 | 0.79 [0.52, 0.92] | 0.31 | 1.45 | 7 |
 | ensemble-veto-2 | 1.37 | **15/22** | **0.44** | 0.72 | 0.75 [0.53, 0.89] | 0.32 | 1.60 | 2 |
 | ensemble-veto-10 | 1.12 | 14/22 | 0.42 | 0.77 | 0.78 [0.55, 0.91] | **0.33** | 1.79 | **0** |
+| ensemble-veto-tree-2 | 1.37 | **15/22** | **0.44** | 0.72 | 0.75 [0.53, 0.89] | 0.32 | 1.60 | 2 |
+| ensemble-veto-tree-10 | 1.23 | 14/22 | 0.41 | 0.73 | 0.74 [0.51, 0.88] | 0.30 | 1.71 | 1 |
 
 **TreeScan run solo (`model_score`'s `"treescan"` statistic — the substance-leaf
 node's recurrence interval, no EB05 underneath it at all) is the cleanest
@@ -142,8 +152,13 @@ Ketamine, Ephedrine, Codeine, the same low-n substances the EB05 family
 already struggles with, plus a few more — consistent with the leaf-only test
 losing TreeScan's actual selling point (branch aggregation power for exactly
 these thin substances; see `treescan.py`'s module docstring and the
-nitazenes example) by construction, since this comparison only reads the
-substance-level node. **It does not avoid Lidocaine** — 5 alarmed quarters at
+nitazenes example) by construction, since this row only reads the
+substance-level node. **That is no longer a caveat but a measurement**: the
+three `treescan-branch*`/`treescan-tree` rows read the same scan at its
+internal nodes and recover Xylazine, Clonazepam and Codeine from exactly
+this missed list — see [Reading the scan at its
+branches](#reading-the-scan-at-its-branches--the-aggregation-this-table-used-to-omit)
+for what that costs. **It does not avoid Lidocaine** — 5 alarmed quarters at
 the fixed line, more than any EB05 variant including plain `eb05` (4q) —
 because nothing in the scan's case definition discounts a mention's position
 on the cause line; `--role-discount` (#1, extended) is solving a problem
@@ -373,6 +388,143 @@ The point estimates still have a consistent ordering worth reading (below),
 but none of the gaps in this table would survive being asked "is this
 difference real."
 
+## Reading the scan at its branches — the aggregation this table used to omit
+
+Every TreeScan row above this section is the **substance-leaf** node's
+recurrence interval, which is the one node level that has an EB05
+counterpart and therefore the only one the 22-substance reference can score
+directly. It is also the one level at which a tree scan has no advantage over
+testing substances one at a time — the whole argument of
+`emerging/analysis/treescan.py` is that a *family* of thin substances is a
+single hypothesis with their pooled count. Earlier versions of this file
+flagged that as an untested caveat. `treescan.branch_sweep` now closes it by
+propagating each internal node's score back down to the substances inside it,
+onto the same `(substance, as_of)` grid every other model is scored on.
+
+**Two guards decide whether a branch's score may be credited to a member**,
+and the three new rows exist to price them:
+
+- **Presence** — the substance must have at least one case inside the window
+  that fired. This is the vectorized form of `treescan.backtest`'s
+  `as_of >= first_seen` rule, and without it `root` alone hands its score to
+  all 211 substances.
+- **Attribution** — the substance must supply at least 15% of the node's
+  excess (`excess_share`, the same quantity `backtest` prints, and the same
+  15% it already calls "partly attributable"). `treescan-branch` runs with
+  presence only; `treescan-branch-attr` and `treescan-tree` add attribution.
+
+### What aggregation catches that the leaf reading cannot
+
+Three labelled emergences the leaf-only row misses outright, each via a real
+pharmacological family and each with the attribution to back it:
+
+| substance | leaf | branch that catches it | excess share | quarters |
+|---|---|---|---|---|
+| **Xylazine** (n=9 lifetime) | never | `Cutting agents and adulterants` (5 leaves) | 21%, 19% | 2024Q4–2025Q1 |
+| **Clonazepam** | never | `Benzodiazepines` (19), `Prescription benzodiazepines` (11) | 16–22% | 2019Q4–2021Q1, 2025Q1–Q2 |
+| **Codeine** | never | `Prescription opioids` (13) | 18% | 2025Q1 |
+
+Xylazine is the case this whole mechanism exists for, and it is the same
+substance the README names as beyond reach of the *spatial* term too: at 9
+lifetime mentions it scores identically zero in all 45 quarters of
+`core/concentration.py` and never clears a leaf test in any quarter of the
+scan. Pooled into a five-member adulterant family it clears RI 10,000, with
+21% of that family's excess attributable to xylazine specifically — the
+"partly attributable" band, not a clean catch, and worth quoting with that
+qualifier attached.
+
+The sharper demonstration is the **2020 designer-benzodiazepine wave**, where
+aggregation does not just add a detection but moves one earlier. Etizolam and
+Flualprazolam both detect at lag **0q** through `Designer benzodiazepines`
+(8 leaves) against 1q at the leaf, at 59–64% and 27–46% attribution
+respectively — neither substance needs the other's count to clear on its own,
+but the family node sees them a quarter before either leaf does, and the
+attribution says both are genuinely driving it. Bromazolam's leaf goes quiet
+after 2024Q4 and the same `Benzodiazepines` node carries it through 2025Q2.
+
+### What it costs, named
+
+**Alprazolam — a labelled negative — alarms 9 times, and the attribution
+guard cannot stop it.** It rides `Benzodiazepines` and then `Depressants` at
+34–46% excess share, comfortably above any threshold that keeps Clonazepam
+(16–22%) or Xylazine (19–21%). This is the honest limit of the guard:
+`excess_share` measures *contribution*, not causation, and a large stable
+member of a genuinely rising family will always look attributable. The same
+mechanism that produces the Clonazepam catch produces the Alprazolam false
+alarm; there is no threshold that separates them, which is why
+`treescan-tree` avoids only 3 of the 7 negatives against the leaf reading's
+4.
+
+**Unguarded branch propagation is not a detector at all.** `treescan-branch`
+raises 389 alarm-quarters across 56 off-target substances at the fixed line —
+mean precision 0.40, the worst of anything in this file except the raw ratio
+— and it **cannot be read at a matched budget at all**: 234 of its rows tie
+at RI 10,000, the Monte Carlo ceiling at 9,999 replicates, because one node
+firing at p = 1e-4 stamps that same score onto every member present. The
+matched-budget row reports 234 alarms against an 85 budget for that reason,
+and its numbers should be read as "uncuttable", not as a threshold choice.
+The guard removes 284 of those 389 alarms and 49 of those 56 off-target
+substances while costing 2 of 12 detections. That trade is the entire case
+for computing attribution rather than trusting the tree.
+
+### The whole tree, read as one detector
+
+`treescan-tree` is `max(leaf, attributed branch)` — TreeScan as it is
+actually specified, rather than either half of it. Against the leaf-only row:
+
+| | leaf only | whole tree | |
+|---|---|---|---|
+| detected (fixed / matched) | 8 / 8 | **11 / 10** | aggregation reaches three more |
+| mean recall (fixed / matched) | 0.32 / 0.36 | **0.44** / 0.36 | **no matched-budget gain** |
+| mean IoU (fixed / matched) | 0.27 / 0.28 | **0.34** / **0.30** | |
+| precision rate (matched) | 0.67 | **0.77** | |
+| off-target subs (fixed / matched) | 1 / 1 | 7 / 2 | |
+| mean lag (fixed / matched) | **1.12** / **1.00** | 1.64 / 1.60 | branches arrive later than leaves |
+
+**The result that matters is the third row.** Mean recall at a matched
+budget is identical (0.36 both ways) while `detected` rises 8 → 10. At a
+fixed alarm budget, aggregation does not deepen coverage of the emergences
+the scan already found — it *spreads the same budget across more of them*,
+and the matched-budget threshold has to climb from RI 60 to RI 3,333 to pay
+for it. Bromazolam (1q → 2q) and Flualprazolam (0q → 1q) each give back a
+quarter of lead time at the matched budget to fund Xylazine and Clonazepam.
+Whether that is an improvement depends entirely on whether breadth or depth
+is what the deployment needs, and this benchmark does not decide that.
+
+What did *not* change: **the nitazenes still never signal.** `Novel synthetic
+opioids` peaks at RI 1.16 across the entire 45-quarter sweep, and the
+`Nitazenes` node never fires either. That family is the case
+`core/tree.py`'s docstring gives for building a family layer at all, and
+aggregation does not rescue it — three mentions pooled is still three
+mentions. Branch aggregation helps families whose members already have real
+counts (benzodiazepines, adulterants, prescription opioids); it does not
+manufacture power where there is none.
+
+### Does a less sparse vetoer improve the veto?
+
+The veto's known failure mode is the vetoer's sparsity: `treescan` scores
+only 95 of 211 substances anywhere in the sweep, and anything it never scored
+is floored to RI 1 and vetoed unconditionally. Reading the same scan at its
+branches nearly doubles that coverage (162 substances) without lowering its
+own line, so the obvious question is whether that is what the veto was
+missing. **It is not.**
+
+| | vetoer = `treescan` | vetoer = `treescan-tree` |
+|---|---|---|
+| `eb05-dual`, veto < RI 2 (matched) | 15/22, recall 0.44, IoU 0.32 | 15/22, recall 0.44, IoU 0.32 — *identical* |
+| `eb05-dual`, veto < RI 10 (matched) | 14/22, recall 0.42, **IoU 0.33**, **0 off-target** | 14/22, recall 0.41, IoU 0.30, 1 off-target |
+| `eb05-v2-role`, veto < RI 10 (fixed) | **6 of 7 negatives avoided** | 5 of 7 — Alprazolam gets through |
+
+At RI 2 the two vetoers are indistinguishable, because a threshold that low
+is nearly a no-op either way. At RI 10 the tree vetoer is consistently
+*slightly worse*: a vetoer that scores more substances vetoes fewer alarms,
+and the alarms it now lets through are the ones the veto existed to kill —
+including Alprazolam on the deployed default. The extra coverage the branch
+reading buys is coverage of substances riding large families, which is
+exactly the population a precision-oriented veto wants to keep blocking.
+`ensemble-veto-v2role-10` keeps the leaf-only vetoer, and that choice is now
+checked rather than inherited.
+
 ## What the table says
 
 **1. Shrinkage is still unambiguously worth its complexity.** The raw `n/E`
@@ -511,23 +663,26 @@ discrimination.
   that detects fewer emergences but detects them fast posts a better mean lag
   than one that catches more slowly — `eb05-v2`'s 1.27q lag looks best in the
   table and is partly an artifact of it detecting the easiest 11.
-- **`treescan`'s row here is a solo, leaf-only reading, not TreeScan's actual
-  case for existing.** `emerging.analysis.treescan`'s whole argument is
-  aggregation power over the substance hierarchy — testing a *branch* (e.g.
-  the nitazenes, or "Fentanyl analogs") when no individual leaf clears on its
-  own — and multiplicity adjustment across every node and window at once.
-  Restricting the comparison to substance-level nodes, the only unit the rest
-  of this table's ground truth can score against, throws away exactly that
-  advantage. `treescan.py`'s own `backtest` command (`results/treescan/
-  vs_eb05.csv`) shows its branch-level signal reaching Xylazine — missed at
-  the leaf level here — via "Cutting agents and adulterants", 21% of that
-  branch's excess attributable to Xylazine specifically (`excess_share`'s
-  "partly attributable" band, not a clean catch); the same file's branch hit
-  on Mitragynine is *not* attributable to it at all (`excess_share` -0.4%) —
-  worth citing carefully rather than as a second catch. Still, this table's
-  substance-level reading structurally cannot show the branch mechanism
-  working at all, so it understates TreeScan's real case, not the other way
-  around.
+- **Branch aggregation is now measured, but it is measured against a
+  substance-level reference, which is not the unit it operates on.** The
+  `treescan-branch*`/`treescan-tree` rows credit a branch's score to
+  individual members so the 22-substance ground truth can score it at all.
+  That is the only way to put aggregation in this table, and it imports the
+  question `excess_share` cannot settle: a branch signal is evidence about
+  the *family*, and apportioning it to members is an attribution model, not
+  a measurement. Alprazolam is the standing proof — 34–46% of a genuinely
+  rising benzodiazepine node's excess, and a labelled negative. A reference
+  that labelled *families* rather than substances would score this mechanism
+  on its own terms; this one cannot, so read the branch rows as a lower
+  bound on what aggregation is worth and an upper bound on how cleanly it can
+  be attributed.
+- **The branch rows inherit the cached scan's `--reference deaths` and its
+  9,999-replicate ceiling.** `branch_sweep` reshapes `results/treescan/
+  backtest.csv` and recomputes attribution from the mentions table; nothing
+  checks that the two were built from the same vintage. The ceiling is the
+  more visible constraint: at 9,999 replicates the smallest p is 1e-4, so
+  every strongly-signalling node-quarter ties at RI 10,000, which is what
+  makes `treescan-branch`'s matched budget uncuttable below 234 alarms.
 
 ## Verdict
 
@@ -564,7 +719,22 @@ occasionally, not in a hot loop. `backtest`'s historical veto reuses
 (which would cost minutes, not seconds), so the full backtest is unaffected
 runtime-wise (~38s, matching the pre-veto weighted sweep cost). Every
 component remains independently switchable back off via its own flag, down
-to plain single-gate EB05.
+to plain single-gate EB05. **The vetoer stays leaf-only on purpose**:
+swapping it for the whole-hierarchy reading (`ensemble-veto-v2role-tree-10`)
+lets Alprazolam back through and drops the default from 6 of 7 negatives
+avoided to 5, for no gain anywhere else — see the branch-aggregation section
+above.
+
+**Branch aggregation is a candidate for the *recall* end of the frontier, not
+the precision end.** `treescan-tree` reaches three emergences no leaf-level
+detector in this file reaches (Xylazine, Clonazepam, Codeine) and detects the
+2020 designer-benzodiazepine wave a quarter earlier than any of them, but at
+a matched budget it buys that breadth by spending lead time on substances it
+already had, and it carries a negative (Alprazolam) that no attribution
+threshold can separate from its true catches. It is not proposed as a default
+here. Its clearest standalone use is the one `treescan.py`'s own `backtest`
+already serves — asking which *family* is moving, where the answer is a
+family and does not have to be apportioned to a member at all.
 
 **The point estimates still favour `eb05-dual`; the confidence intervals say
 this benchmark can't prove it yet.** `eb05-dual` ties for the best mean

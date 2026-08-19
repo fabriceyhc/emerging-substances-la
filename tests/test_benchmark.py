@@ -148,8 +148,35 @@ def test_treescan_reads_its_own_recurrence_interval_and_sweep() -> None:
     s = bm.model_score(sw, model)
     assert list(s) == [12.0, 250.0]
     assert model.fixed_threshold == pytest.approx(100.0)
-    assert model.sweep_key == ("treescan",)
+    assert model.sweep_key == ("treescan", None)
     assert model.sweep_key not in {m.sweep_key for m in bm.MODELS if m.id != "treescan"}
+
+
+def test_every_treescan_reading_is_its_own_sweep_and_shares_the_ri_line() -> None:
+    """The leaf, branch and whole-tree readings are three different tables
+    off one cached scan, so each needs its own sweep key -- collapsing any
+    two would hand one model the other's rows -- while all three are read off
+    `recurrence_interval` at TreeScan's own RI line, never the EB05
+    `--threshold`. The unguarded and attribution-guarded branch readings
+    differ only in `min_excess_share`, which is exactly why it is in the key.
+    """
+    ids = ["treescan", "treescan-branch", "treescan-branch-attr", "treescan-tree"]
+    models = [bm.MODELS_BY_ID[i] for i in ids]
+    assert len({m.sweep_key for m in models}) == len(ids)
+    assert (bm.MODELS_BY_ID["treescan-branch"].sweep_key
+            != bm.MODELS_BY_ID["treescan-branch-attr"].sweep_key)
+
+    sw = pd.DataFrame({
+        "substance": ["x"], "as_of": [pd.Timestamp("2024-01-01")],
+        "recurrence_interval": [250.0], "p_value": [0.004], "llr": [9.0],
+        "source_node": ["Designer benzodiazepines"], "source_level": ["family"],
+        "source_n_leaves": [8], "excess_share": [0.6],
+    })
+    for m in models:
+        assert m.statistic in bm.TREESCAN_STATISTICS
+        assert m.fixed_threshold == pytest.approx(bm.TREESCAN_RI_THRESHOLD)
+        assert list(bm.model_score(sw, m)) == [250.0]
+        assert bm.ENSEMBLE_FLOOR[m.statistic] == 1.0
 
 
 def _eb_like_sweep(rows) -> pd.DataFrame:

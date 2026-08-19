@@ -12,6 +12,7 @@ guard the specific ways the implementation could break quietly.
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from emerging.analysis import treescan
@@ -173,3 +174,114 @@ def test_fentanyl_analogs_excludes_fentanyl_itself() -> None:
     nodes = {nd.name: nd.leaves for nd in tree.build_nodes(cats)}
     assert "Fentanyl" not in nodes["Fentanyl analogs"]
     assert {"Acetyl fentanyl", "para-Fluorofentanyl"} == nodes["Fentanyl analogs"]
+
+
+def _branch_fixture(tmp_path, rows):
+    """A 12-quarter frame with one family node over three substances.
+
+    Reference is flat, so a 4-quarter window expects exactly a third of each
+    substance's total. `A` puts all 12 of its cases in that window (excess
+    +8), `B` is flat at 3/quarter (excess 0, present), and `C` appears only
+    in the very first quarter (excess -4/3, absent from the window). The
+    family's excess is 6.67, so the shares are A 1.20, B 0.00, C -0.20 --
+    one substance above any guard, one below it but present, one absent.
+    """
+    import pandas as pd
+    from emerging.core.tree import Node
+
+    qs = pd.date_range("2022-01-01", periods=12, freq="QS")
+    counts = []
+    for i, q in enumerate(qs):
+        counts.append({"substance": "A", "quarter": q, "n": 3 if i >= 8 else 0})
+        counts.append({"substance": "B", "quarter": q, "n": 3})
+        counts.append({"substance": "C", "quarter": q, "n": 4 if i == 0 else 0})
+    counts = pd.DataFrame(counts)
+    ref = pd.Series(100.0, index=qs)
+    nodes = [
+        Node("Fam", "family", frozenset({"A", "B", "C"})),
+        Node("Sub", "family", frozenset({"A", "B"})),
+        Node("A", "substance", frozenset({"A"})),
+        Node("B", "substance", frozenset({"B"})),
+        Node("C", "substance", frozenset({"C"})),
+    ]
+    path = tmp_path / "backtest.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return path, (counts, ref, ref, nodes)
+
+
+def test_branch_sweep_credits_a_family_to_the_members_actually_in_it(tmp_path) -> None:
+    """The presence guard is what stops a branch signal from being handed to
+    every substance filed under it. `C` is a member of the node that fired but
+    has no case inside the window that fired, so it gets nothing -- the
+    vectorized form of `backtest`'s "a branch cannot have detected a substance
+    that did not exist yet". `B` is present but contributes none of the
+    excess, so it survives unguarded and is dropped by the attribution guard.
+    """
+    path, prep = _branch_fixture(tmp_path, [
+        {"as_of": "2024-10-01", "node": "Fam", "level": "family", "n_leaves": 3,
+         "window_q": 4, "observed": 24, "expected": 17.3, "n_study": 52,
+         "llr": 6.0, "p_value": 0.002, "obs_exp": 1.4,
+         "recurrence_interval": 500.0},
+    ])
+    unguarded = treescan.branch_sweep(path, prepared=prep)
+    assert list(unguarded["substance"]) == ["A", "B"]
+    assert list(unguarded["source_node"]) == ["Fam", "Fam"]
+    assert unguarded.set_index("substance")["excess_share"]["A"] == pytest.approx(1.2)
+    assert unguarded.set_index("substance")["excess_share"]["B"] == pytest.approx(0.0)
+
+    guarded = treescan.branch_sweep(path, prepared=prep, min_excess_share=0.15)
+    assert list(guarded["substance"]) == ["A"]
+    assert list(guarded["recurrence_interval"]) == [500.0]
+
+
+def test_branch_sweep_share_matches_excess_share(tmp_path) -> None:
+    """`branch_sweep` computes every substance's attribution in one array
+    pass; `excess_share` computes one at a time from the counts table. They
+    are the same quantity and must not drift apart -- the guard's threshold
+    is calibrated against the numbers `backtest` prints, which come from
+    `excess_share`."""
+    path, prep = _branch_fixture(tmp_path, [
+        {"as_of": "2024-10-01", "node": "Fam", "level": "family", "n_leaves": 3,
+         "window_q": 4, "observed": 24, "expected": 17.3, "n_study": 52,
+         "llr": 6.0, "p_value": 0.002, "obs_exp": 1.4,
+         "recurrence_interval": 500.0},
+    ])
+    counts, _, ref, nodes = prep
+    got = treescan.branch_sweep(path, prepared=prep).set_index("substance")
+    for s in got.index:
+        assert got.loc[s, "excess_share"] == pytest.approx(
+            treescan.excess_share(counts, ref, {"A", "B", "C"}, s,
+                                  pd.Timestamp("2024-10-01"), 4))
+
+
+def test_branch_sweep_leaf_wins_on_score_and_ties_go_to_the_smaller_node(tmp_path) -> None:
+    """With `include_leaves` the whole hierarchy is one detector, so a
+    substance takes the best score available to it and a leaf is exempt from
+    both guards (it is trivially present in, and wholly responsible for, its
+    own excess). Equal scores resolve to the most specific node, so
+    `source_node` names the tightest branch that justifies the alarm rather
+    than whichever one sorted first."""
+    path, prep = _branch_fixture(tmp_path, [
+        {"as_of": "2024-10-01", "node": "Fam", "level": "family", "n_leaves": 3,
+         "window_q": 4, "observed": 24, "expected": 17.3, "n_study": 52,
+         "llr": 6.0, "p_value": 0.002, "obs_exp": 1.4,
+         "recurrence_interval": 500.0},
+        {"as_of": "2024-10-01", "node": "Sub", "level": "family", "n_leaves": 2,
+         "window_q": 4, "observed": 24, "expected": 16.0, "n_study": 48,
+         "llr": 6.0, "p_value": 0.002, "obs_exp": 1.5,
+         "recurrence_interval": 500.0},
+        {"as_of": "2024-10-01", "node": "B", "level": "substance", "n_leaves": 1,
+         "window_q": 4, "observed": 12, "expected": 12.0, "n_study": 36,
+         "llr": 8.0, "p_value": 0.0005, "obs_exp": 1.0,
+         "recurrence_interval": 2000.0},
+    ])
+    out = treescan.branch_sweep(path, prepared=prep, min_excess_share=0.15,
+                                include_leaves=True).set_index("substance")
+    # `B` contributes 0% of both branches' excess and is guarded out of them,
+    # but its own leaf row stands on its own.
+    assert out.loc["B", "recurrence_interval"] == 2000.0
+    assert out.loc["B", "source_level"] == "substance"
+    # `A` clears the guard on both branches at the same RI; the two-leaf node
+    # is the more specific claim.
+    assert out.loc["A", "source_node"] == "Sub"
+    assert "C" not in out.index

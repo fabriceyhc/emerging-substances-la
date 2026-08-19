@@ -327,6 +327,156 @@ def leaf_sweep(path: Path = BACKTEST_PATH) -> pd.DataFrame:
     return leaf[["substance", "as_of", "recurrence_interval", "p_value", "llr"]]
 
 
+def _frame_excess(
+    counts: pd.DataFrame, ref: pd.Series, as_of: pd.Timestamp,
+    study_quarters: int = STUDY_QUARTERS, max_window: int = MAX_WINDOW,
+) -> tuple[pd.Index, np.ndarray, np.ndarray]:
+    """Per-substance observed count and excess, for every trailing window.
+
+    Returns `(substances, observed, excess)` where the two arrays are
+    `(n_substances, max_window)` and column `w` is the trailing window of
+    length `w + 1` ending at `as_of`. `excess = observed - total * p_w` is the
+    same quantity `excess_share` apportions, computed once for every substance
+    and window instead of once per (node, substance) pair -- the node-level
+    excess is just the sum over the node's leaves, because both the observed
+    count and the expectation are sums over leaves.
+
+    Empty index when the study frame is not yet full, matching `run_scan`'s
+    refusal to scan a short frame.
+    """
+    frame = [q for q in sorted(ref.index) if q <= as_of][-study_quarters:]
+    if len(frame) < study_quarters:
+        return pd.Index([], name="substance"), np.zeros((0, max_window)), \
+               np.zeros((0, max_window))
+    p = ref.loc[frame].to_numpy(dtype=float)
+    p = p / p.sum()
+
+    sub = counts[counts["quarter"].isin(frame)]
+    wide = (sub.pivot_table(index="substance", columns="quarter", values="n",
+                            aggfunc="sum", fill_value=0)
+              .reindex(columns=frame, fill_value=0))
+    x = wide.to_numpy(dtype=float)
+    obs = _trailing_counts(x, max_window)
+    total = x.sum(axis=1)
+    pw = _window_shares(p, max_window)
+    return wide.index, obs, obs - total[:, None] * pw[None, :]
+
+
+def branch_sweep(
+    path: Path = BACKTEST_PATH,
+    mentions_path: Path = MENTIONS_PATH,
+    cutoff: str | None = CUTOFF,
+    reference: str = "deaths",
+    min_excess_share: float | None = None,
+    include_leaves: bool = False,
+    study_quarters: int = STUDY_QUARTERS,
+    max_window: int = MAX_WINDOW,
+    prepared: tuple | None = None,
+) -> pd.DataFrame:
+    """The scan's *internal* nodes, read as a per-substance detector.
+
+    `leaf_sweep` reads only the substance-level nodes, which is the one part
+    of the scan that has an EB05 counterpart -- and therefore throws away the
+    entire reason a tree scan exists. The nitazenes are 1 and 2 mentions
+    apiece and can never clear a leaf test; the family node holding them is a
+    single hypothesis with their pooled count. This function propagates every
+    branch's signal back down to the substances inside it, so that mechanism
+    can be scored on the same (substance, as_of) grid every other detector in
+    `emerging.validation.benchmark` is scored on.
+
+    A branch score is credited to a substance only when both hold:
+
+    - **presence** -- the substance has at least one mention inside the
+      node's own best window. Without this, `root` firing hands its score to
+      all 211 substances, including ones that will not exist for six years.
+      This is the vectorized form of `backtest`'s `as_of >= first_seen`
+      guard, tightened from "has ever appeared" to "is in the window that
+      fired".
+    - **attribution**, when `min_excess_share` is set -- the substance
+      contributes at least that fraction of the node's excess, exactly
+      `excess_share`'s quantity. `Fentanyl and Fentanyl-related` fired in
+      2017Q2 on fentanyl's own explosion, in the same quarter carfentanil
+      appeared on one case; unguarded, that reads as a detection of
+      carfentanil. `backtest` already reports this number and reads 0.5 as
+      "attributable" and 0.15 as "partly attributable"; passing `None` here
+      keeps the unguarded behaviour so the guard's cost can be measured
+      rather than assumed.
+
+    With `include_leaves`, a substance's own leaf row competes with its
+    branches and the score is the maximum -- the whole tree read as one
+    detector, which is what TreeScan actually is. A leaf is exempt from both
+    guards: it is trivially present in and wholly responsible for its own
+    excess.
+
+    Ties on the score go to the *smaller* node, so `source_node` names the
+    most specific branch that justifies it -- the same rule `backtest` uses
+    when it picks which branch to report.
+
+    Reads the same cached `treescan backtest` table `leaf_sweep` does, and
+    inherits its assumption that the cache was written with these scan
+    parameters and this `--reference`; the attribution weights are recomputed
+    here from `mentions_path`, so a stale cache mixes two vintages silently.
+    Re-run `emerging treescan backtest` if either has moved.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found -- run "
+                                f"`emerging treescan backtest` first")
+    bt = pd.read_csv(path, parse_dates=["as_of"])
+    counts, _, ref, nodes = prepared or prepare(mentions_path, cutoff, reference)
+    leaves_of = {nd.name: nd.leaves for nd in nodes}
+    size_of = {nd.name: nd.n_leaves for nd in nodes}
+
+    rows = []
+    for as_of, g in bt.groupby("as_of", sort=True):
+        subs, obs, excess = _frame_excess(counts, ref, as_of, study_quarters,
+                                          max_window)
+        if not len(subs):
+            continue
+        pos = {s: i for i, s in enumerate(subs)}
+        for r in g.itertuples(index=False):
+            if r.level == "substance":
+                if include_leaves:
+                    rows.append((r.node, as_of, r.recurrence_interval,
+                                 r.p_value, r.llr, r.node, r.level, 1, 1.0))
+                continue
+            w = r.window_q
+            if pd.isna(w) or r.node not in leaves_of:
+                continue
+            idx = [pos[s] for s in leaves_of[r.node] if s in pos]
+            if not idx:
+                continue
+            w = int(w) - 1
+            e = excess[idx, w]
+            node_excess = e.sum()
+            # No excess to apportion -- the node is at or below expectation,
+            # so no member can be said to have driven it. `_llr` already
+            # zeroes those, but a cached row from a different scan setting
+            # would otherwise divide by zero here.
+            if node_excess <= 0:
+                continue
+            share = e / node_excess
+            present = obs[idx, w] > 0
+            keep = present if min_excess_share is None else (
+                present & (share >= min_excess_share))
+            for j in np.flatnonzero(keep):
+                rows.append((subs[idx[j]], as_of, r.recurrence_interval,
+                             r.p_value, r.llr, r.node, r.level,
+                             size_of.get(r.node, len(idx)), float(share[j])))
+
+    out = pd.DataFrame(rows, columns=[
+        "substance", "as_of", "recurrence_interval", "p_value", "llr",
+        "source_node", "source_level", "source_n_leaves", "excess_share"])
+    if out.empty:
+        return out
+    out = (out.sort_values(["substance", "as_of", "recurrence_interval",
+                            "source_n_leaves", "source_node"],
+                           ascending=[True, True, False, True, True],
+                           kind="stable")
+              .drop_duplicates(subset=["substance", "as_of"], keep="first")
+              .reset_index(drop=True))
+    return out
+
+
 def _q(t: pd.Timestamp) -> str:
     return f"{t.year}Q{t.quarter}"
 

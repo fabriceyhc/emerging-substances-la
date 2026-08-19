@@ -64,7 +64,9 @@ from emerging.analysis.trends import (ALARM_THRESHOLD, SPATIAL_WEIGHT,
                                       _episodes, _spatial_sweep,
                                       load_quarterly, sweep_eb05)
 from emerging.analysis.treescan import RI_THRESHOLD as TREESCAN_RI_THRESHOLD
+from emerging.analysis.treescan import branch_sweep as treescan_branch_sweep
 from emerging.analysis.treescan import leaf_sweep as treescan_leaf_sweep
+from emerging.analysis.treescan import prepare as treescan_prepare
 from emerging.config import BASELINE_QUARTERS, CUTOFF, RECENT_QUARTERS
 from emerging.ingest.extract import MENTIONS_PATH
 from emerging.paths import KNOWN_EMERGENCES_PATH, results_dir
@@ -75,6 +77,18 @@ from emerging.viz import BLUE, INK, MUTED, ORANGE
 app = typer.Typer(add_completion=False)
 
 RESULTS_DIR = results_dir("benchmark")
+
+# The three readings of one tree-temporal scan: all read off
+# `recurrence_interval` and all cut at TreeScan's own RI line, but each is a
+# different table and so a different sweep key. Slot 0 of that key is the
+# statistic name, which is what keeps it from colliding with the EB05
+# family's `(weighted, role_discount, spatial)`.
+TREESCAN_STATISTICS = frozenset(
+    {"treescan", "treescan_branch", "treescan_tree"})
+# The attribution line the branch models are guarded at, and the band
+# `treescan.backtest` already calls "partly attributable" -- below it, a
+# branch is signalling on something other than the substance being credited.
+MIN_EXCESS_SHARE = 0.15
 
 
 @dataclass(frozen=True)
@@ -110,6 +124,19 @@ class Model:
       nothing in common with EB05's (a posterior percentile, roughly 0..3), so
       the shared `--threshold` at the fixed reading would be meaningless for
       it -- see `fixed_threshold`.
+    - `"treescan_branch"` — the same scan read at its *internal* nodes: a
+      substance scores whatever the best branch containing it scored. This is
+      the mechanism a tree scan exists for and the one the leaf reading
+      cannot exercise at all -- the nitazenes are 1 and 2 mentions apiece and
+      can never clear a leaf test, but the family node holding them is a
+      single hypothesis with their pooled count. `min_excess_share` decides
+      whether the branch's score is credited to every member present or only
+      to the members actually driving it.
+    - `"treescan_tree"` — `max(leaf, branch)`, the whole hierarchy read as
+      one detector, which is what TreeScan is. Included because neither half
+      alone is the method: the leaf reading is the method with its
+      aggregation removed, and the branch reading is the method with its
+      most-specific hypotheses removed.
     - `"ensemble"` — `components` (other model ids) combined per `combine`;
       see `build_ensemble_sweep` for the four modes (`"mean"`, `"max"`,
       `"threshold"`, `"veto"`) and what each one actually does to the
@@ -135,11 +162,16 @@ class Model:
 
     id: str
     label: str
-    statistic: str          # "ratio" | "eb05" | "eb05_dual" | "treescan" | "ensemble"
+    statistic: str          # "ratio" | "eb05" | "eb05_dual" | "treescan*" | "ensemble"
     weighted: bool = False  # GPS_V2_DESIGN.md #1
     role_discount: bool = False  # #1's substance-level phi_s, only if weighted
     spatial: str = "none"   # GPS_V2_DESIGN.md #3: none | discount | prior
     fixed_threshold: float | None = None  # override --threshold for this model
+    # Only for the treescan branch/tree statistics: the fraction of a node's
+    # excess a substance must contribute before that node's score is credited
+    # to it. `None` credits every member present in the node's window, which
+    # is what lets the guard's cost be measured rather than assumed.
+    min_excess_share: float | None = None
     components: tuple[str, ...] = ()  # model ids, only if statistic == "ensemble"
     combine: str = "mean"  # "mean" | "max" | "threshold" | "veto", ensemble only
     veto_threshold: float | None = None  # combine == "veto" only; see below
@@ -147,8 +179,8 @@ class Model:
     @property
     def sweep_key(self) -> tuple:
         """Models differing only in how they *read* one sweep share it."""
-        if self.statistic == "treescan":
-            return ("treescan",)
+        if self.statistic in TREESCAN_STATISTICS:
+            return (self.statistic, self.min_excess_share)
         if self.statistic == "ensemble":
             return ("ensemble", self.combine, self.veto_threshold) + self.components
         return (self.weighted, self.role_discount, self.spatial)
@@ -185,6 +217,20 @@ MODELS: list[Model] = [
     Model("treescan",
           "TreeScan, substance-leaf node, deaths reference (P1, solo)",
           "treescan", fixed_threshold=TREESCAN_RI_THRESHOLD),
+    Model("treescan-branch",
+          "TreeScan, branch nodes only, credited to every member present -- "
+          "the unguarded form, kept to price the attribution guard",
+          "treescan_branch", fixed_threshold=TREESCAN_RI_THRESHOLD),
+    Model("treescan-branch-attr",
+          "TreeScan, branch nodes only, credited only where the substance "
+          f"drives >= {MIN_EXCESS_SHARE:.0%} of the branch's excess",
+          "treescan_branch", fixed_threshold=TREESCAN_RI_THRESHOLD,
+          min_excess_share=MIN_EXCESS_SHARE),
+    Model("treescan-tree",
+          "TreeScan as designed: max(leaf, attributed branch) over the whole "
+          "hierarchy -- the aggregation the leaf-only row cannot show",
+          "treescan_tree", fixed_threshold=TREESCAN_RI_THRESHOLD,
+          min_excess_share=MIN_EXCESS_SHARE),
     Model("ensemble-mean", "ensemble, soft AND: mean rank of "
           "eb05-dual + treescan -- kept as a negative comparison, see "
           "build_ensemble_sweep's docstring",
@@ -221,6 +267,24 @@ MODELS: list[Model] = [
           "treescan vetoes below RI 10",
           "ensemble", combine="veto", veto_threshold=10.0,
           components=("eb05-v2-role", "treescan")),
+    # The veto's failure mode is the vetoer's sparsity: `treescan` scores only
+    # 95 of 211 substances anywhere in the sweep, and a substance it never
+    # scored is floored to RI 1 and vetoed unconditionally. Reading the same
+    # scan at its branches roughly doubles that coverage without lowering its
+    # own line, so these ask whether aggregation is what the veto was missing.
+    Model("ensemble-veto-tree-2", "ensemble: eb05-dual proposes, the full "
+          "tree reading (treescan-tree) vetoes below RI 2",
+          "ensemble", combine="veto", veto_threshold=2.0,
+          components=("eb05-dual", "treescan-tree")),
+    Model("ensemble-veto-tree-10", "ensemble: eb05-dual proposes, "
+          "treescan-tree vetoes below RI 10",
+          "ensemble", combine="veto", veto_threshold=10.0,
+          components=("eb05-dual", "treescan-tree")),
+    Model("ensemble-veto-v2role-tree-10", "ensemble: eb05-v2-role proposes, "
+          "treescan-tree vetoes below RI 10 -- the deployed default's veto "
+          "with the leaf-only vetoer swapped for the whole hierarchy",
+          "ensemble", combine="veto", veto_threshold=10.0,
+          components=("eb05-v2-role", "treescan-tree")),
 ]
 MODELS_BY_ID = {m.id: m for m in MODELS}
 
@@ -232,7 +296,7 @@ MODELS_BY_ID = {m.id: m for m in MODELS}
 # floored would let a component's sparsest quarters inflate the few
 # substances it does score.
 ENSEMBLE_FLOOR = {"ratio": 0.0, "eb05": 0.0, "eb05_dual": 0.0, "eb05_own": 0.0,
-                  "treescan": 1.0}
+                  "treescan": 1.0, "treescan_branch": 1.0, "treescan_tree": 1.0}
 
 
 def model_score(sweep: pd.DataFrame, model: Model) -> pd.Series:
@@ -255,7 +319,7 @@ def model_score(sweep: pd.DataFrame, model: Model) -> pd.Series:
         return sweep[["eb05", "eb05_own"]].min(axis=1)
     if model.statistic == "eb05_own":
         return sweep["eb05_own"]
-    if model.statistic == "treescan":
+    if model.statistic in TREESCAN_STATISTICS:
         return sweep["recurrence_interval"]
     if model.statistic == "ensemble":
         return sweep["ensemble_score"]
@@ -494,6 +558,12 @@ def build_sweeps(
     ensemble's components are built even if the caller did not select them
     directly -- `--models ensemble-eb-tree` alone still needs `eb05-dual` and
     `treescan`'s sweeps to combine.
+
+    The three TreeScan readings are all reshapings of one cached
+    `treescan backtest` table and cost no Monte Carlo work here; the two
+    branch readings additionally need the mentions table and the tree to
+    recompute each node's excess attribution, which is loaded at most once
+    however many of them were selected.
     """
     all_ids = {m.id for m in models}
     for m in models:
@@ -509,15 +579,34 @@ def build_sweeps(
 
     out: dict[tuple, pd.DataFrame] = {}
     ensemble_keys = []
+    prepared: tuple | None = None  # treescan's counts/tree, built at most once
     for key in dict.fromkeys(m.sweep_key for m in all_models):
         if key[0] == "ensemble":
             ensemble_keys.append(key)  # needs other sweeps built first
             continue
-        if key == ("treescan",):
+        if key[0] in TREESCAN_STATISTICS:
+            stat, min_share = key
             if not quiet:
-                typer.echo("  sweep: treescan (cached leaf backtest, "
-                          "`emerging treescan backtest` to refresh)")
-            out[key] = treescan_leaf_sweep()
+                detail = {"treescan": "substance leaves only",
+                          "treescan_branch": "branch nodes only",
+                          "treescan_tree": "leaves + branches"}[stat]
+                guard = ("every member present" if min_share is None
+                         else f"excess share >= {min_share:.0%}")
+                typer.echo(f"  sweep: {stat} ({detail}, {guard}; cached "
+                           "backtest, `emerging treescan backtest` to refresh)")
+            if stat == "treescan":
+                out[key] = treescan_leaf_sweep()
+            else:
+                # `prepare` re-reads the mentions table and rebuilds the tree
+                # to recompute the attribution weights, so it is done once and
+                # shared across however many branch readings were selected.
+                if prepared is None:
+                    prepared = treescan_prepare(mentions, cutoff)
+                out[key] = treescan_branch_sweep(
+                    mentions_path=mentions, cutoff=cutoff,
+                    min_excess_share=min_share,
+                    include_leaves=(stat == "treescan_tree"),
+                    prepared=prepared)
             continue
         weighted, role_discount, spatial = key
         if not quiet:

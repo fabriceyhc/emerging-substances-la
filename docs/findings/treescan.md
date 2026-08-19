@@ -74,6 +74,22 @@ Two further negative results worth recording:
   manufactures detections. Only para-fluorofentanyl gets a genuine branch
   detection (74% attributable, via `Fentanyl analogs`).
 
+**Both of those negatives were read off `backtest`'s five target substances.
+Scored across all 211 instead, the picture is less bleak** — see
+[benchmark.md's branch-aggregation section](benchmark.md#reading-the-scan-at-its-branches--the-aggregation-this-table-used-to-omit),
+which runs `branch_sweep` over the same cached scan and scores it against the
+22-substance reference. Aggregation there recovers three emergences the leaf
+reading misses entirely (Xylazine at 21% attributable via `Cutting agents and
+adulterants`, Clonazepam at 16–22% via `Benzodiazepines`, Codeine at 18% via
+`Prescription opioids`) and detects the 2020 designer-benzodiazepine wave a
+quarter *earlier* than any leaf, with Etizolam and Flualprazolam at 59–64%
+and 27–46% of `Designer benzodiazepines`' excess. The nitazene verdict above
+is unchanged and now bounded rather than general: aggregation failed for the
+family it was built for and works for families whose members already carry
+real counts. The attributability verdict is unchanged too, and sharpened —
+Alprazolam, a labelled negative, clears any attribution threshold that keeps
+Clonazepam, because `excess_share` measures contribution and not causation.
+
 **Verdict: it runs alongside EB05, it does not replace it.** What it adds is
 multiplicity-honest inference and window-free detection, which is exactly what
 promoted lidocaine and PCP from "below the line" to "signal". What it does not

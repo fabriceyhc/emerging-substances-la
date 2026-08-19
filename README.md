@@ -109,7 +109,7 @@ keeps its own Typer app.
 | `analysis/relrisk.py` | Kelsall–Diggle log relative-risk surface, CV-selected bandwidth, random-labelling tolerance contours |
 | `validation/treescan_validate.py` | exports our tree/counts to TreeScan's input format and diffs the two implementations — needs the binary, which is not in the repo |
 | `validation/ground_truth.py` | scores detected alarm episodes against hand-curated emergence intervals by temporal overlap |
-| `validation/benchmark.py` | every detector variant on one table, read at a fixed line and at a matched alarm budget |
+| `validation/benchmark.py` | every detector variant on one table, read at a fixed line and at a matched alarm budget — including the tree scan read at its leaves, at its branches, and as a whole hierarchy |
 | `config.py` | study-design parameters shared across analyses (`CUTOFF`, `SINCE`, the windows) |
 | `viz.py` | the plot palette |
 | `paths.py` | where the data lives; `results_dir()` gives each analysis its own output directory |
@@ -189,6 +189,10 @@ calibrated, and which artifacts would have manufactured a false result.
   than removing it: xylazine, at 9 lifetime mentions, scores identically zero
   in all 45 quarters. The benchmark measures what the term buys where it does
   apply, which is about half a quarter of lead time on two substances.
+  Xylazine is reachable by *aggregation* rather than by geography — the tree
+  scan's `Cutting agents and adulterants` branch catches it at 21%
+  attributable, which is the one mechanism in this repository that gets
+  anything out of a 9-mention substance (`docs/findings/benchmark.md`).
 - **Occupancy-detection modeling.** Separating "absent" from "not tested for"
   needs detection probability to vary across units. One ME office running one
   evolving panel gives no such variation — every zip shares the same lab. This

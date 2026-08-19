@@ -6,6 +6,101 @@ not deleted — the artifact is usually the more useful record.
 
 ---
 
+## 2026-08-19 — Reading TreeScan at its branches: the aggregation the benchmark had never exercised
+
+`benchmark.py`'s `treescan` row was always the substance-**leaf** node's
+recurrence interval — the one node level a tree scan has no advantage at, and
+the only one the substance-level ground truth can score directly. The entry
+below (2026-08-18) flagged that explicitly: *"This comparison only exercises
+TreeScan's substance-leaf reading; its actual case (branch-level aggregation
+for substances too thin to score alone) is untested by construction."* This
+closes that.
+
+**New: `treescan.branch_sweep`**, which propagates each internal node's score
+back down to its member substances onto the same `(substance, as_of)` grid
+every other detector is scored on, under two guards — *presence* (the
+substance has a case inside the window that fired; the vectorized form of
+`backtest`'s `as_of >= first_seen`, without which `root` alone hands its score
+to all 211 substances) and *attribution* (`excess_share` ≥ 15%, the band
+`backtest` already calls "partly attributable"). Attribution is recomputed in
+one array pass per as-of quarter rather than per (node, substance) pair, and
+`tests/test_treescan.py` pins it against `excess_share`'s own value so the
+two cannot drift. Four new benchmark models: `treescan-branch` (unguarded),
+`treescan-branch-attr`, `treescan-tree` (`max(leaf, attributed branch)` —
+TreeScan as actually specified), and three ensembles swapping the tree
+reading in as the vetoer. No new Monte Carlo work: all of it reshapes the
+cached `treescan backtest` table.
+
+**Aggregation reaches three labelled emergences no leaf-level detector in
+the file reaches** — Xylazine via `Cutting agents and adulterants` (21% of
+that family's excess, RI 10,000; the same substance the README names as
+beyond reach of the spatial term too, at 9 lifetime mentions), Clonazepam via
+`Benzodiazepines` (16–22%), Codeine via `Prescription opioids` (18%). The
+cleaner demonstration is the **2020 designer-benzodiazepine wave**: Etizolam
+and Flualprazolam both detect at **lag 0q** through `Designer
+benzodiazepines` against 1q at the leaf, at 59–64% and 27–46% attribution —
+the family node sees them a quarter before either leaf does and the
+attribution says both are genuinely driving it.
+
+**And the recall gain does not survive a matched budget.** `treescan-tree`
+vs. leaf-only: `detected` 8 → 11 fixed, 8 → 10 matched, mean IoU 0.27 → 0.34
+/ 0.28 → 0.30, matched precision rate 0.67 → 0.77 — but **mean recall at a
+matched budget is identical, 0.36 both ways**, with the threshold climbing
+from RI 60 to RI 3,333 to pay for the extra substances. Aggregation spreads a
+fixed alarm budget across *more* emergences rather than covering the ones it
+already had more completely; Bromazolam (1q → 2q) and Flualprazolam (0q → 1q)
+each give back a quarter of lead time to fund Xylazine and Clonazepam. Same
+lesson as this log's original tree-scan head-to-head, arrived at from the
+other direction: the fixed line flatters, the budget tells.
+
+**The attribution guard is load-bearing, and it still cannot save
+Alprazolam.** Unguarded branch propagation raises 389 alarm-quarters over 56
+off-target substances (mean precision 0.40) and **cannot be read at a matched
+budget at all** — 234 of its rows tie at RI 10,000, the Monte Carlo ceiling
+at 9,999 replicates, because one node firing at p = 1e-4 stamps that score
+onto every member present. The guard removes 284 of those alarms and 49 of
+those substances for 2 of 12 detections. What it cannot remove: Alprazolam, a
+labelled negative, riding `Benzodiazepines`/`Depressants` at 34–46% excess
+share — *above* Clonazepam's 16–22% and Xylazine's 19–21%. `excess_share`
+measures contribution, not causation, and a large stable member of a rising
+family will always look attributable. There is no threshold separating the
+true catch from the false one; `treescan-tree` avoids 3 of 7 negatives
+against the leaf reading's 4.
+
+**Negative result: a less sparse vetoer does not improve the veto.** The
+hypothesis was that `ensemble-veto-*`'s limitation is `treescan`'s sparsity
+(95 of 211 substances ever scored; anything unscored is floored to RI 1 and
+vetoed unconditionally), and that the branch reading's 162 substances would
+fix it. At RI 2 the two vetoers are byte-identical (the threshold is nearly a
+no-op either way); at RI 10 the tree vetoer is consistently *slightly worse*,
+and on the deployed default it drops 6-of-7 negatives avoided to 5 by letting
+Alprazolam through. A vetoer that scores more substances vetoes fewer alarms,
+and the alarms it lets through are substances riding large families —
+precisely the population a precision-oriented veto wants to keep blocking.
+`ensemble-veto-v2role-10` keeps the leaf-only vetoer; that is now checked
+rather than inherited.
+
+**Unchanged: the nitazenes still never signal.** `Novel synthetic opioids`
+peaks at RI 1.16 across all 45 quarters and the `Nitazenes` node never fires.
+That family is `core/tree.py`'s stated reason for building a family layer at
+all, and aggregation does not rescue it — three mentions pooled is still
+three mentions. Branch aggregation helps families whose members already carry
+real counts; it does not manufacture power where there is none. The 2026-08-10
+entry's "**Aggregation power — failed**" verdict stands as written for that
+case, and is now bounded rather than general: it failed for the family it was
+built for, and works for benzodiazepines, adulterants and prescription
+opioids.
+
+**What this still cannot settle.** Aggregation operates on families, and the
+22-substance reference labels substances, so scoring it at all requires
+apportioning a family's evidence to members — an attribution model, not a
+measurement. Alprazolam is the standing proof. Read the branch rows as a
+lower bound on what aggregation is worth and an upper bound on how cleanly it
+can be attributed. Full tables, the per-branch attribution and the vetoer
+comparison: `docs/findings/benchmark.md`.
+
+---
+
 ## 2026-08-18 — Wired `ensemble-veto-v2role-10` in as `rank`/`backtest`'s default
 
 Moved the strongest result from the comparison framework into the live
@@ -243,7 +338,9 @@ quarters, worse than plain EB05's 4) since nothing in its case definition
 discounts cause-line position. This comparison only exercises TreeScan's
 substance-leaf reading; its actual case (branch-level aggregation for
 substances too thin to score alone) is untested by construction — see
-`docs/findings/benchmark.md`'s caveats section. Full tables and the
+`docs/findings/benchmark.md`'s caveats section. *(Closed 2026-08-19 by
+`treescan.branch_sweep` and the `treescan-branch*`/`treescan-tree` models —
+see the entry above.)* Full tables and the
 per-negative breakdown: `docs/findings/benchmark.md`; `docs/findings/
 ground_truth.md` for the 22-substance reference and its definitions.
 
