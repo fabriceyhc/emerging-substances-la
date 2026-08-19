@@ -79,12 +79,13 @@ FENTANYL_ANALOG_CATEGORY = "Fentanyl and Fentanyl-related"
 
 
 def load_cohort(
-    lacme_path: Path = LACME_PATH, drop_chronic_alcohol: bool = True
+    lacme_path: Path = LACME_PATH, drop_chronic_alcohol: bool = True,
+    verbose: bool = True,
 ) -> pd.DataFrame:
     """Load LACME overdose deaths with narrative text, zip, and quarter."""
     df = pd.read_csv(lacme_path, low_memory=False)
     if drop_chronic_alcohol:
-        df = filter_alcohol_only(df)
+        df = filter_alcohol_only(df, verbose=verbose)
 
     df["death_date"] = pd.to_datetime(df["DeathDate"], format="mixed", errors="coerce")
     df = df.dropna(subset=["death_date"])

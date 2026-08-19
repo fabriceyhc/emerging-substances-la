@@ -69,9 +69,9 @@ import pandas as pd
 import typer
 
 from emerging.config import CUTOFF, RECENT_QUARTERS
+from emerging.core.causeline import causea_order, rollup_map
 from emerging.ingest.extract import MENTIONS_PATH, TEXT_FIELDS, load_cohort
 from emerging.paths import results_dir
-from emerging.ingest.lexicon import MAX_NGRAM, load_lexicon, tokenize
 from emerging.viz import AQUA, BLUE, INK, INK_2, MUTED, ORANGE
 
 app = typer.Typer(add_completion=False)
@@ -91,45 +91,6 @@ ALONE_INDEPENDENT = 15.0  # kills without company this often -> stands alone
 ALONE_PASSENGER = 5.0     # essentially never alone ...
 RANK_PASSENGER = 0.60     # ... and habitually named late -> passenger
 FENT_MARKER = 70.0        # ... and that late company is fentanyl -> adulterant
-
-
-def _rollup_map(m: pd.DataFrame) -> dict[str, str]:
-    """canonical -> rollup, so CauseA scan output matches the mentions table."""
-    r = m.drop_duplicates(subset="canonical")
-    return dict(zip(r["canonical"], r["rollup"].fillna(r["canonical"])))
-
-
-def causea_order(
-    cohort: pd.DataFrame, roll: dict[str, str], field: str = "CauseA"
-) -> dict[str, list[str]]:
-    """Case -> substances in the order the ME named them on the cause line.
-
-    Runs the same greedy longest-n-gram-first scan as `extract`, but keeps
-    token position instead of discarding it. No fuzzy fallback: this only has
-    to *order* substances already known to be in the case, and a typo that
-    fails to match here simply leaves that substance unranked rather than
-    mis-ranked.
-    """
-    lex = load_lexicon()
-    a2c = lex.alias_to_canonical
-    out: dict[str, list[str]] = {}
-    for case, text in zip(cohort["CaseNumber"], cohort[field].fillna("")):
-        toks = tokenize(text)
-        seen: list[str] = []
-        i = 0
-        while i < len(toks):
-            for n in range(min(MAX_NGRAM, len(toks) - i), 0, -1):
-                hit = a2c.get(" ".join(toks[i:i + n]))
-                if hit is not None:
-                    c = roll.get(hit, hit)
-                    if c not in seen:
-                        seen.append(c)
-                    i += n
-                    break
-            else:
-                i += 1
-        out[case] = seen
-    return out
 
 
 def case_sets(
@@ -266,7 +227,7 @@ def profile(
     sets, qs = case_sets(mentions, cutoff, quarters)
     cohort = load_cohort()
     m = pd.read_parquet(mentions)
-    order = causea_order(cohort, _rollup_map(m))
+    order = causea_order(cohort, rollup_map(m))
 
     prof = profile_table(sets, order, min_cases)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -296,7 +257,7 @@ def plot(
     sets, qs = case_sets(mentions, cutoff, quarters)
     cohort = load_cohort()
     m = pd.read_parquet(mentions)
-    order = causea_order(cohort, _rollup_map(m))
+    order = causea_order(cohort, rollup_map(m))
     prof = profile_table(sets, order, min_cases).head(top)
     prof = prof.iloc[::-1]  # largest at the top of a horizontal chart
     out_dir.mkdir(parents=True, exist_ok=True)

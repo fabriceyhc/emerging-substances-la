@@ -37,6 +37,8 @@ PROCESSED_DIR = DATA_ROOT / "processed" / "emerging"
 LACME_PATH = RAW_DIR / "lacme" / "2012-01-2026-04-overdoses-regex-supplemented.csv"
 NFLIS_PATH = RAW_DIR / "nflis" / "NFLIS-Substances_Excel_20260520-222324728.csv"
 ZIPS_PATH = RAW_DIR / "_geo" / "zipcodes.geojson"
+KNOWN_EMERGENCES_PATH = RAW_DIR / "ground_truth" / "known_emergences.csv"
+NFLIS_CA_COUNTS_PATH = RAW_DIR / "ground_truth" / "nflis_ca_counts.csv"
 
 RESULTS_DIR = ROOT / "results"
 

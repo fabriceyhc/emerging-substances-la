@@ -56,6 +56,7 @@ Four figures, written to results/figures/:
 Usage:
     emerging trends rank
     emerging trends rank --recent-quarters 8 --top 30
+    emerging trends dispersion
     emerging trends backtest
     emerging trends plot
 """
@@ -74,10 +75,14 @@ import typer
 from matplotlib.colors import PowerNorm
 from scipy.optimize import minimize
 from scipy.special import gammaln
-from scipy.stats import gamma as gamma_dist
+from scipy.stats import chi2, gamma as gamma_dist
 
 from emerging.config import (BASELINE_QUARTERS, CUTOFF, LAG_QUARTERS,
                              RECENT_QUARTERS)
+from emerging.core.causeline import causea_order, rollup_map
+from emerging.core.concentration import (concentration_weight,
+                                         load_spatial_cohort,
+                                         sweep_concentration)
 from emerging.ingest.extract import MENTIONS_PATH, load_cohort
 from emerging.paths import results_dir
 from emerging.viz import BLUE, INK, INK_2, MUTED, ORANGE, SEQ, YELLOW
@@ -101,6 +106,19 @@ KNOWN_EMERGENCES = [
 ALARM_THRESHOLD = 1.5
 ALARM_PATH = RESULTS_DIR / "alarm_history.csv"
 
+# TreeScan veto floor, as a recurrence interval (`emerging.analysis.treescan`).
+# `credible_rise` is suppressed only when TreeScan's own, independent
+# substance-leaf scan sees essentially no excess at all this quarter -- far
+# below TreeScan's own RI >= 100 alarm line, which would instead re-impose
+# TreeScan's detection threshold on top of EB05's and lose real detections
+# (see `docs/findings/benchmark.md`'s "mean"/"max" ensembles, both of which
+# do exactly that and lose to EB05 alone). Validated on the 22-substance
+# backtest as `ensemble-veto-v2role-10`: with `--weighted --role-discount
+# --spatial discount` as the case definition, this is a same-or-better
+# result than the case definition alone on every column at the matched
+# budget, and the best negative-avoidance (6/7) of any configuration tried.
+TREESCAN_VETO_THRESHOLD = 10.0
+
 # Substances driving the national emerging-drug conversation, checked against
 # LA regardless of whether the ranking surfaces them. The ranking can only
 # promote what is already in the data; this asks the complementary question,
@@ -123,10 +141,255 @@ WATCHLIST: dict[str, str] = {
 # the public-health question is about the class, not the analog.
 NITAZENE_RE = r"nitaz"
 
+# Position-weighted case definition (`docs/GPS_V2_DESIGN.md` #1).
+#
+# A substance is discounted only when it is named *last* on a line of three or
+# more -- the adulterant pattern documented for lidocaine in
+# `docs/findings/polysubstance.md` (last on 82% of its lines, first on none).
+# A substance that is a necessary contributor but rarely or never lead -- a
+# benzodiazepine potentiating opioid toxicity, say -- is not on that pattern
+# and keeps full credit; only "habitually relegated to the trailing slot" is
+# treated as evidence of a non-causal role. A 2-substance line cannot tell
+# "trailing adulterant" from "just not first" apart (the same short-line
+# caution `polysubstance.profile_table` documents), so last-of-2 also keeps
+# full credit.
+#
+# **Integer-valued does not mean Poisson-safe.** The first cut of this
+# reasoned that keeping credit integer-valued was enough to keep the weighted
+# sum a legitimate count for `_nb_logpmf`'s Poisson assumption. It is not: for
+# a per-mention credit c with any spread across {0, 1, 2}, c^2 >= c pointwise
+# whenever c is 0 or >=1, so E[c^2] >= E[c] and the weighted sum is
+# structurally *overdispersed* relative to a Poisson with the same mean --
+# integer or not. Fed straight into `_fit_gps_prior`, that overdispersion
+# reads as signal: on this repository's data it inflated the false-EB05>1
+# rate from 5.1/203 substances (raw counts) to 19.0/203. `SOLO_CREDIT == 2` is
+# the offender; a pure {0, 1} scheme has c^2 == c identically, so phi == 1 no
+# matter how the keep/discard split varies case to case, which is what makes
+# it dispersion-neutral *by construction* rather than approximately so. That
+# is kept as {0, 1, 2} anyway -- a solo mention is arguably the strongest
+# available evidence of causal weight, not merely of independence, which is
+# what `polysubstance.alone_pct` already measures -- and the dispersion is
+# corrected explicitly instead: see `_credit_dispersion` and its use in
+# `rank_substances`.
+# Spatial concentration (`docs/GPS_V2_DESIGN.md` #3), `spatial_mode="discount"`.
+# The maximum share of a substance's expected count the concentration term may
+# discount. 0.25 is a *chosen* number, and the design note is explicit that
+# this being chosen rather than estimated is the fallback's weakness relative
+# to the covariate-adjusted prior. It is set where it is because
+# E -> 0.75*E raises EB05 by roughly what a 33% rise in the observed count
+# would -- large enough to change a borderline ranking, small enough that
+# geography alone can never manufacture an alarm out of a flat count. A
+# substance at conc == 1 (z_s well past 2) and n_recent == n_baseline still
+# scores EB05 below the 1.5 line on its own.
+SPATIAL_WEIGHT = 0.25
+
+# Where the per-(substance, as-of) concentration sweep is cached. It costs
+# about 5s to recompute, so this is a convenience rather than a dependency --
+# `_spatial_sweep` regenerates it silently when absent, unlike
+# `ALARM_PATH`, which `plot` refuses to recompute.
+SPATIAL_PATH = RESULTS_DIR / "spatial_concentration.csv"
+
+SOLO_CREDIT = 2       # unambiguous: nothing else named
+NAMED_CREDIT = 1      # named, and not (last on a line of 3+)
+TRAILING_CREDIT = 0   # last on a line of 3+ -- the adulterant pattern
+# Mentions the cause-line scan cannot place (it has no fuzzy fallback, see
+# `causea_order`) get neutral credit: no ordering evidence is not evidence of
+# a trailing role.
+UNMATCHED_CREDIT = 1
+
+
+def _ever_independent(order: dict[str, list[str]]) -> frozenset[str]:
+    """Substances that have, at least once, been named alone or first on the
+    cause line -- direct evidence the ME considered them capable of
+    independently dominating a death, even if they usually ride along with
+    something else.
+
+    Fixes the construct-validity problem the design note's validation caught:
+    xylazine is a fentanyl adulterant by pattern (habitually trailing,
+    same as lidocaine) but is not pharmacologically inert the way lidocaine
+    is, and the surveillance question for it is "is this entering the
+    supply," not "did the ME consider it the proximate cause here." On this
+    repository's data the split is clean: lidocaine and levamisole (known
+    inert cutting agents) are named alone or first *zero* times across their
+    entire histories (42 and 12 mentions); xylazine clears it once, in the
+    same quarter its emergence is later detected.
+
+    Solo and lead collapse to the same check: `seq[0]` is the substance
+    itself when `len(seq) == 1` (solo) and the lead substance otherwise, so
+    "named alone or first" is exactly "appears at index 0 of some case's
+    ordered sequence" -- no separate solo-mention branch needed.
+    """
+    return frozenset(seq[0] for seq in order.values() if seq)
+
+
+def _credit_from_order(
+    order: dict[str, list[str]], independent: frozenset[str] = frozenset(),
+) -> pd.DataFrame:
+    """Per (CaseNumber, substance) -> integer credit from cause-line position.
+
+    `independent` is the output of `_ever_independent`: a substance in that
+    set never receives `TRAILING_CREDIT`, even in a case where it is named
+    last on a 3+-substance line, because other evidence already establishes
+    it can be the whole story.
+
+    Pure function of an already-computed case -> ordered-substances map (and
+    an already-computed independence set), so it is testable without the
+    lexicon or cohort I/O `causea_order` needs.
+    """
+    rows = []
+    for case, seq in order.items():
+        L = len(seq)
+        for idx, sub in enumerate(seq):
+            if L == 1:
+                c = SOLO_CREDIT
+            elif idx == L - 1 and L >= 3:
+                c = NAMED_CREDIT if sub in independent else TRAILING_CREDIT
+            else:
+                c = NAMED_CREDIT
+            rows.append((case, sub, c))
+    return pd.DataFrame(rows, columns=["CaseNumber", "substance", "credit"])
+
+
+def _position_credit(cohort: pd.DataFrame, roll: dict[str, str]) -> pd.DataFrame:
+    """Cause-line order, converted to credit. See `_credit_from_order`.
+
+    **As-of caution.** Per-case credit only ever reads that case's own
+    cause-line text, so slicing the resulting counts by quarter afterward
+    (as `backtest`/`sweep_eb05` do to the *unweighted* counts today) cannot
+    leak future information. `_ever_independent` breaks that property: it is
+    a cross-case aggregate, so a substance's *later* independence evidence
+    would retroactively un-discount its *earlier* trailing mentions if this
+    were computed once and reused for every as-of quarter. Callers that
+    replay history (`backtest`, `sweep_eb05`, once either supports
+    `--weighted`) must call this -- via `load_quarterly` -- with `cohort`
+    already restricted to `quarter <= as_of`, once per as-of step, not once
+    up front. `load_quarterly` does this by construction: it is always given
+    the cohort already filtered to its own `cutoff`.
+    """
+    order = causea_order(cohort, roll)
+    return _credit_from_order(order, _ever_independent(order))
+
+
+def _credit_dispersion(credit: pd.Series) -> float:
+    """phi = E[c^2] / E[c], the dispersion a per-mention credit distribution
+    introduces relative to a plain Poisson count (phi == 1 for raw mentions,
+    where every credit is exactly 1).
+
+    A compound-Poisson sum W = sum(c_i) over a Poisson-count number of
+    mentions has Var(W) = mu * E[c^2] against Mean(W) = mu * E[c], so phi is
+    exactly the variance-to-mean ratio the weighted sum carries beyond what a
+    same-mean Poisson would -- dividing both the count and the expectation
+    that go into `_fit_gps_prior` by phi (see `rank_substances`) rescales the
+    effective sample size down to what the credit scheme's own variance
+    supports, which is the standard quasi-likelihood correction for
+    overdispersed count data. `gammaln` is defined on the reals, so feeding
+    the rescaled, non-integer n through `_nb_logpmf` is mechanically fine;
+    what changes is that its output is a quasi-likelihood rather than a
+    normalized pmf, which is the accepted trade for overdispersion this way.
+    """
+    c = credit.to_numpy(dtype=float)
+    m1 = c.mean()
+    return float((c ** 2).mean() / m1) if m1 > 0 else 1.0
+
+
+# Minimum credited mentions before a substance gets its own role discount.
+# `_role_dispersion` is a per-substance aggregate over exactly the deaths
+# that name it, the same statistical-power problem `polysubstance.MIN_CASES`
+# already guards against -- below this, one or two differently-timed deaths
+# would swing phi_s wildly, and the substance keeps phi_s = 1 (no extra
+# discount) rather than a number this repository's rarest candidates
+# (xylazine, n=9) cannot support.
+MIN_CASES_FOR_ROLE_DISCOUNT = 10
+
+# Floor on a substance's own mean credit before computing phi_s, so a
+# substance whose *every* credited mention happens to be zero (fully
+# trailing, no exceptions at all) gets a large but finite discount rather
+# than a division by zero.
+_ROLE_MEAN_CREDIT_FLOOR = 0.05
+
+
+def _role_dispersion(
+    order: dict[str, list[str]], independent: frozenset[str],
+) -> dict[str, float]:
+    """Per-substance phi_s = max(1, NAMED_CREDIT / mean(credit)) -- an
+    *additional* effective-sample-size discount, on top of the per-death
+    position credit and the global phi correction, for a substance whose own
+    aggregate role still reads as adulterant-patterned even where per-death
+    position cannot prove it.
+
+    **Why per-death credit alone leaves a gap.** Only a mention *trailing on
+    a line of 3+* is discounted (`_credit_from_order`); a 2-substance line
+    keeps full credit even when it's "just co-occurring with the same one
+    thing every time," because a 2-line can't distinguish that from "really
+    was a contributor." Checked directly against real data: 12 of
+    Lidocaine's 34 recent mentions are literally `[Fentanyl, Lidocaine]` --
+    full per-death credit every time, by design, and enough raw signal on
+    their own to keep tripping the alarm after the per-death discount zeroes
+    the other 22. `_credit_from_order` cannot fix this without breaking the
+    short-line carve-out generally; this function targets it a different
+    way, by reading the substance's own *aggregate* mean credit.
+
+    **The reference point is NAMED_CREDIT (1), not SOLO_CREDIT (2) -- this
+    was wrong in the first cut and caught by running `backtest`, not by
+    inspection.** An `_ever_independent`-exempted substance never receives
+    `TRAILING_CREDIT`, so its credit values are all 1 or 2 -- but *solo* is
+    genuinely rare for almost any real drug, dangerous or not: checked
+    directly on this repository's data, Bromazolam sits at mean credit
+    1.000, Carfentanil 1.167, Mitragynine 1.013, PCP 1.001, Fentanyl 1.223 --
+    all comfortably at or above 1, none anywhere near 2. Using `SOLO_CREDIT`
+    as the reference punished every one of them for not being frequently
+    solo, a bar almost nothing clears, and gutted `backtest`'s known
+    emergences across the board (Bromazolam's peak EB05 dropped from 2.69 to
+    1.00, Xylazine's dual gate stopped clearing entirely) -- a real
+    regression the first version of this function shipped with, caught only
+    by re-running `backtest`, the same discipline that caught the xylazine
+    problem in `_ever_independent` itself. `NAMED_CREDIT` -- "was this
+    mention ever relegated to the trailing slot" -- is the right bar: a
+    substance sitting at or above it (never trailing) gets `phi_s = 1`,
+    exactly the substances above; Lidocaine (mean 0.310) and Levamisole
+    (mean 0.667) sit clearly below it and still get a real discount (phi_s
+    3.2 and 1.5 respectively). The `max(1, ...)` floor matters on its own:
+    without it, any substance with mean credit above 1 (Fentanyl, at 1.223)
+    would get `phi_s < 1`, which *amplifies* its evidence rather than
+    discounting it -- backwards for what this function is for.
+
+    **A constant, substance-level factor doesn't distort the ranking the way
+    it might look like it should.** `phi_s` divides both `n` and `E`
+    (`rank_substances`) by the same amount for a substance, so it leaves the
+    raw ratio `n/E` exactly unchanged -- checked numerically on Lidocaine:
+    the ratio is 1.971 whether n and E are full-scale or both divided down.
+    What it changes is the *posterior*: `_fit_gps_prior`'s `alpha`/`beta`
+    are fit once, globally, across every substance, so shrinking one
+    substance's own `n`/`E` pulls its own posterior harder toward that fixed
+    population mean -- the identical mechanism `_credit_dispersion`'s global
+    `phi` already uses, just substance-specific rather than pooled. This is
+    a deliberate design choice, not a coincidence: a substance-specific
+    factor is only informative if it is allowed to change the *how sure are
+    we* answer, since it structurally cannot change the *what's the rate*
+    answer, and trying to make it change the rate directly (e.g. dividing
+    only `n`) would give a substance's full lifetime reputation a permanent,
+    asymmetric veto over ever detecting a real change in its own behaviour.
+
+    **As-of caution — identical to `_ever_independent`, for the identical
+    reason.** This is a cross-case aggregate over each substance's own
+    mentions, so it must be computed from `order` already restricted to
+    `quarter <= as_of`, recomputed fresh at every as-of step, never cached
+    across a `backtest` sweep and reused for earlier quarters.
+    """
+    credit = _credit_from_order(order, independent)
+    out: dict[str, float] = {}
+    for sub, g in credit.groupby("substance"):
+        if len(g) < MIN_CASES_FOR_ROLE_DISCOUNT:
+            continue
+        m = max(float(g["credit"].mean()), _ROLE_MEAN_CREDIT_FLOOR)
+        out[sub] = max(1.0, NAMED_CREDIT / m)
+    return out
+
 
 def load_quarterly(
     mentions_path: Path = MENTIONS_PATH, rollup: bool = True,
-    cutoff: str | None = CUTOFF,
+    cutoff: str | None = CUTOFF, weighted: bool = False, quiet: bool = False,
+    role_discount: bool = False,
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Return (substance x quarter counts, all-OD deaths per quarter).
 
@@ -137,6 +400,30 @@ def load_quarterly(
     data. `cutoff` drops quarters ending after a settled-toxicology date (see
     `CUTOFF`). Separately, trailing quarters the extract does not even span are
     always dropped, whatever the cutoff.
+
+    `weighted` replaces the raw mention count (every death worth 1) with the
+    position-weighted case definition from `docs/GPS_V2_DESIGN.md` #1: a death
+    is discounted to 0 only when the substance is named last on a cause line of
+    three or more *and* the substance has never been named alone or first
+    anywhere in the cohort up to `cutoff` (`_ever_independent`) -- the
+    adulterant pattern, unless other evidence already rules that out. It is a
+    case-definition change, not a different statistic -- everything
+    downstream of `load_quarterly` is unchanged.
+
+    `role_discount` (only meaningful when `weighted=True`) additionally
+    applies `_role_dispersion`'s per-substance phi_s -- see that function's
+    docstring for the Lidocaine case it targets (a substance whose mentions
+    are overwhelmingly short co-occurrence lines, which per-death credit
+    alone cannot discount) and why a constant per-substance factor changes
+    the posterior rather than the ranked ratio. Off by default: it changes
+    `--weighted`'s existing, already-validated behaviour, and should be
+    opted into per `backtest` run, not silently folded in.
+
+    `quiet` suppresses the diagnostic `typer.echo` lines below (and
+    `load_cohort`'s alcohol-filter line). Off by default; a caller that
+    re-invokes this once per as-of quarter (`backtest --weighted`, see
+    `_position_credit`) sets it, or the same three lines print on every
+    iteration and bury the actual output.
     """
     m = pd.read_parquet(mentions_path)
     m = m[~m["is_class_term"].fillna(False)]
@@ -146,10 +433,36 @@ def load_quarterly(
     # One row per (case, substance) after rollup — a death naming both fentanyl
     # and norfentanyl must count once.
     m = m.drop_duplicates(subset=["CaseNumber", key])
-    counts = (m.groupby([key, "quarter"]).size()
+
+    cohort = load_cohort(verbose=not quiet)
+    phi_s: dict[str, float] = {}
+
+    if weighted:
+        roll = rollup_map(m) if rollup else {}
+        # `_ever_independent` is a cross-case aggregate (see `_position_credit`
+        # for why that matters) -- bound it to `cutoff`, not the full extract,
+        # so a caller replaying history one `cutoff` at a time (`backtest`,
+        # once it recomputes rather than slices -- see there) never lets
+        # evidence from after the point being scored change an earlier score.
+        credit_cohort = cohort
+        if cutoff is not None:
+            credit_cohort = cohort[cohort["quarter"] <= pd.Timestamp(cutoff)]
+        order = causea_order(credit_cohort, roll)
+        independent = _ever_independent(order)
+        credit = _credit_from_order(order, independent).rename(
+            columns={"substance": key})
+        m = m.merge(credit, how="left", on=["CaseNumber", key])
+        m["credit"] = m["credit"].fillna(UNMATCHED_CREDIT).astype(int)
+        phi = _credit_dispersion(m["credit"])
+        if role_discount:
+            phi_s = _role_dispersion(order, independent)
+    else:
+        m["credit"] = 1
+        phi = 1.0  # raw counts are exactly Poisson; no correction to make
+
+    counts = (m.groupby([key, "quarter"])["credit"].sum()
                 .rename("n").reset_index().rename(columns={key: "substance"}))
 
-    cohort = load_cohort()
     denom = cohort.groupby("quarter").size().rename("N")
 
     # Drop trailing quarters the extract does not even span. The file ends
@@ -161,7 +474,7 @@ def load_quarterly(
     complete = [q for q in denom.index
                 if q + pd.offsets.QuarterEnd(0) <= last_death]
     dropped = [q for q in denom.index if q not in set(complete)]
-    if dropped:
+    if dropped and not quiet:
         typer.echo("dropped partial calendar quarter(s): "
                    + ", ".join(f"{q.year}Q{q.quarter} (n={int(denom[q])})"
                                for q in dropped))
@@ -171,14 +484,67 @@ def load_quarterly(
         cut = pd.Timestamp(cutoff)
         keep = [q for q in denom.index if q + pd.offsets.QuarterEnd(0) <= cut]
         n_cut = len(denom) - len(keep)
-        if n_cut:
+        if n_cut and not quiet:
             typer.echo(f"cutoff {cut.date()}: dropped {n_cut} unsettled "
                        f"quarter(s) after {keep[-1].year}Q{keep[-1].quarter}")
         denom = denom.loc[keep]
         complete = keep
 
     counts = counts[counts["quarter"].isin(set(complete))]
+    # Dispersion correction for `rank_substances` -- see `_credit_dispersion`
+    # and, for `phi_s`, `_role_dispersion`. Set after the filtering above
+    # rather than before: `.attrs` propagation through pandas indexing is not
+    # guaranteed, so this is the last write.
+    counts.attrs["phi"] = phi
+    counts.attrs["phi_s"] = phi_s
     return counts, denom
+
+
+def _spatial_sweep(
+    quarters: list[pd.Timestamp], mentions_path: Path = MENTIONS_PATH,
+    recent_quarters: int = RECENT_QUARTERS, cache: Path | None = SPATIAL_PATH,
+    refresh: bool = False,
+) -> pd.DataFrame:
+    """(substance, as_of) -> z_spatial, for the quarters this ranking uses.
+
+    Computed over the *same* trailing `recent_quarters` window the ranking
+    scores its numerator over, so the two halves of the statistic are about
+    the same deaths. `quarters` is passed in from the caller's already
+    cutoff-filtered `denom` index rather than read from the cohort, so the
+    concentration sweep inherits the completeness filters exactly instead of
+    reimplementing them -- otherwise the 2026Q2 stub `load_quarterly` drops
+    would quietly reappear here as a window of its own.
+
+    Cached to CSV because it is the same numbers for every model config in
+    `validation/benchmark.py`, which would otherwise recompute it six times.
+    The cache carries the `recent_quarters` it was built with and is discarded
+    on a mismatch: the as-of *dates* are identical whatever the window length,
+    so a set-membership check alone would silently hand 4-quarter windows to a
+    caller that asked for 6.
+    """
+    if cache is not None and cache.exists() and not refresh:
+        sw = pd.read_csv(cache, parse_dates=["as_of"])
+        fresh = (set(sw["as_of"]) >= set(quarters[recent_quarters - 1:])
+                 and "recent_quarters" in sw
+                 and set(sw["recent_quarters"]) == {recent_quarters})
+        if fresh:
+            return sw
+    bg, mn = load_spatial_cohort(mentions_path, quiet=True)
+    keep = set(quarters)
+    sw = sweep_concentration(bg[bg["quarter"].isin(keep)],
+                             mn[mn["quarter"].isin(keep)],
+                             sorted(keep), recent_quarters=recent_quarters)
+    sw["recent_quarters"] = recent_quarters
+    if cache is not None:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        sw.to_csv(cache, index=False)
+    return sw
+
+
+def _z_at(sweep: pd.DataFrame, as_of: pd.Timestamp) -> pd.Series:
+    """The `z_spatial` column of one as-of quarter, indexed by substance."""
+    g = sweep[sweep["as_of"] == as_of]
+    return g.set_index("substance")["z"] if not g.empty else pd.Series(dtype=float)
 
 
 def _nb_logpmf(n: np.ndarray, e: np.ndarray, a: float, b: float) -> np.ndarray:
@@ -196,9 +562,18 @@ def _nb_logpmf(n: np.ndarray, e: np.ndarray, a: float, b: float) -> np.ndarray:
 # 0 disables the cap. See `_fit_gps_prior` for when to set one.
 MAX_EXPECTED_FOR_FIT = 0.0
 
+# Bound on the spatial covariate's coefficient in the covariate-adjusted prior
+# (`_fit_gps_prior(z=...)`). z is standardized, so gamma = 1 already means a
+# one-sd rise in spatial concentration divides the prior rate parameter by e --
+# a factor-2.7 shift in the shrinkage target. Anything past 2 is the optimizer
+# escaping into a corner of a 3-parameter fit that ~110 informative cells
+# cannot pin down, not a finding.
+MAX_GAMMA = 2.0
+
 
 def _fit_gps_prior(
-    n: np.ndarray, e: np.ndarray, max_expected: float = MAX_EXPECTED_FOR_FIT
+    n: np.ndarray, e: np.ndarray, max_expected: float = MAX_EXPECTED_FOR_FIT,
+    z: np.ndarray | None = None,
 ) -> dict:
     """ML fit of a Gamma(alpha, beta) prior under a Poisson likelihood.
 
@@ -222,41 +597,99 @@ def _fit_gps_prior(
     it is off by default because the standard GPS fit uses all cells and the
     uncapped fit is the more conservative of the two (alpha 7.4 vs 19.9 —
     a more diffuse prior, so less shrinkage).
+
+    **`z` is the covariate-adjusted prior of `docs/GPS_V2_DESIGN.md` #3**, the
+    design note's *primary* direction for folding spatial concentration into
+    the statistic rather than multiplying it in afterwards. Given a
+    per-substance spatial-concentration score, the rate parameter becomes
+
+        beta_s = beta_0 * exp(-gamma * z_s)
+
+    with `gamma` estimated by the same MLE that already produces alpha and
+    beta_0, so the shrinkage *target* moves with concentration: a lower
+    beta_s is a prior expecting a higher lambda, so a spatially concentrated
+    substance needs less raw temporal evidence to clear the same EB05 bar.
+
+    The property that makes this preferable to the `E`-discount fallback is
+    that **gamma is estimated, not chosen**: if spatial concentration carries
+    no information about which substances are genuinely rising, the
+    likelihood drives gamma to 0 and the fit reduces exactly to the
+    unadjusted one. The discount's `w` cannot do that — it applies whatever
+    weight it was handed. `z` is standardized inside the fit set (mean and sd
+    are returned in the prior dict) so gamma is on a per-standard-deviation
+    scale and the optimizer sees a well-conditioned problem; substances
+    excluded from the fit are still scored, using those same two constants.
+    gamma is bounded to `MAX_GAMMA` — an unbounded exponential in a
+    3-parameter Nelder-Mead fit over ~110 informative cells will happily run
+    off to a degenerate corner, the same identifiability wall the two-component
+    mixture hit above.
     """
     keep = e > 0
     if max_expected:
         keep &= e <= max_expected
     nf, ef = n[keep], e[keep]
+    zf = None if z is None else np.asarray(z, dtype=float)[keep]
     if len(nf) < 10:
-        return {"alpha": 0.5, "beta": 0.5, "n_fit": int(len(nf)),
-                "converged": False}
+        return {"alpha": 0.5, "beta": 0.5, "gamma": 0.0, "z_mean": 0.0,
+                "z_sd": 1.0, "n_fit": int(len(nf)), "converged": False}
+
+    z_mean, z_sd = 0.0, 1.0
+    if zf is not None:
+        z_mean = float(zf.mean())
+        sd = float(zf.std())
+        z_sd = sd if sd > 1e-9 else 1.0
+        zs = (zf - z_mean) / z_sd
 
     def nll(params: np.ndarray) -> float:
-        a, b = np.exp(params)
+        a, b = np.exp(params[:2])
         if min(a, b) < 1e-9:
             return 1e12
-        ll = _nb_logpmf(nf, ef, a, b)
+        if zf is None:
+            bs = b
+        else:
+            g = params[2]
+            if abs(g) > MAX_GAMMA:
+                return 1e12
+            bs = b * np.exp(-g * zs)
+        ll = _nb_logpmf(nf, ef, a, bs)
         return -float(np.sum(ll)) if np.isfinite(ll).all() else 1e12
 
-    res = minimize(nll, x0=np.array([0.0, 0.0]), method="Nelder-Mead",
+    x0 = np.array([0.0, 0.0]) if zf is None else np.array([0.0, 0.0, 0.0])
+    res = minimize(nll, x0=x0, method="Nelder-Mead",
                    options={"maxiter": 10000, "maxfev": 10000,
                             "xatol": 1e-8, "fatol": 1e-8})
-    a, b = np.exp(res.x)
-    return {"alpha": float(a), "beta": float(b), "n_fit": int(len(nf)),
+    a, b = np.exp(res.x[:2])
+    return {"alpha": float(a), "beta": float(b),
+            "gamma": float(res.x[2]) if zf is not None else 0.0,
+            "z_mean": z_mean, "z_sd": z_sd, "n_fit": int(len(nf)),
             "converged": bool(res.success), "nll": float(res.fun)}
 
 
-def _gps_scores(n: np.ndarray, e: np.ndarray, pr: dict) -> dict:
-    """EBGM and posterior quantiles from Gamma(alpha + n, beta + E).
+def _gps_scores(n: np.ndarray, e: np.ndarray, pr: dict,
+                z: np.ndarray | None = None) -> dict:
+    """EBGM and posterior quantiles from Gamma(alpha + n, beta_s + E).
 
     EBGM is the geometric mean exp(E[log lambda | n]), per DuMouchel, rather
     than the arithmetic posterior mean — at these counts the posterior is
     always skewed and the geometric mean is the stable summary.
+
+    `z` reconstructs the per-substance `beta_s = beta_0 * exp(-gamma * z_s)`
+    of a covariate-adjusted fit, using the standardization constants the fit
+    returned — so substances excluded from the fit (E == 0) are scored on the
+    same scale as those inside it. With no covariate, or a fit that drove
+    gamma to 0, this collapses to the scalar `beta` and the posteriors are
+    identical to the unadjusted ones.
     """
     from scipy.special import digamma
 
+    beta = pr["beta"]
+    if z is not None and pr.get("gamma"):
+        zs = (np.asarray(z, dtype=float) - pr.get("z_mean", 0.0)) / pr.get(
+            "z_sd", 1.0)
+        beta = pr["beta"] * np.exp(-pr["gamma"] * zs)
+
     post_a = pr["alpha"] + n
-    post_b = pr["beta"] + e
+    post_b = beta + e
     return {
         "ebgm": np.exp(digamma(post_a) - np.log(post_b)),
         "eb05": gamma_dist.ppf(0.05, post_a, scale=1.0 / post_b),
@@ -270,8 +703,42 @@ def rank_substances(
     lag_quarters: int = LAG_QUARTERS,
     recent_quarters: int = RECENT_QUARTERS,
     baseline_quarters: int = BASELINE_QUARTERS,
+    z_spatial: pd.Series | None = None,
+    spatial_mode: str = "none",
+    spatial_weight: float = SPATIAL_WEIGHT,
 ) -> tuple[pd.DataFrame, dict]:
-    """Score every substance by EB-shrunken growth in share of OD deaths."""
+    """Score every substance by EB-shrunken growth in share of OD deaths.
+
+    `z_spatial` is the per-substance spatial-concentration score for *this*
+    as-of quarter's recent window (`core.concentration.window_scores`), and
+    `spatial_mode` selects which of `docs/GPS_V2_DESIGN.md` #3's two fusions
+    it drives. Both leave `lambda = n/E`'s meaning intact; neither is the
+    rejected `EBGM * spatial_RR` multiplication, which would silently discard
+    the conservative-bound property that is the reason to use EB05 at all.
+
+    - `"none"` (default) — ignore it. Identical output to before this
+      parameter existed.
+    - `"discount"` — the design note's simpler fallback,
+      `E_s <- E_s * (1 - w * conc_s)`, with `conc_s` the bounded [0, 1] squash
+      of `z_s` (`concentration_weight`). Applied to Gate A and Gate B alike,
+      and applied *before* the prior is fitted rather than after, so the prior
+      describes the ensemble under the adjusted expectations instead of being
+      fitted to one set of numbers and used on another.
+    - `"prior"` — the design note's primary direction, the covariate-adjusted
+      prior `beta_s = beta_0 * exp(-gamma * z_s)` with gamma estimated by the
+      same MLE. See `_fit_gps_prior`.
+
+    Substances with no spatial score — absent from `z_spatial`, or withheld by
+    `concentration.MIN_CASES` / `MAX_FRACTION` — get `z_s = 0`, which is a
+    no-op under both fusions. That is the intended reading: no spatial
+    evidence either way, so no adjustment either way.
+    """
+    # Read before `pivot_table`, whose attrs propagation is not guaranteed.
+    # 1.0 for unweighted counts (`load_quarterly(weighted=False)` sets it
+    # explicitly; a `counts` frame built by hand, as in tests, has none, and
+    # "no correction" is the right default for that case too).
+    phi = float(counts.attrs.get("phi", 1.0))
+    phi_s = dict(counts.attrs.get("phi_s", {}))
     quarters = sorted(denom.index)
     if lag_quarters:
         quarters = quarters[:-lag_quarters]
@@ -293,12 +760,67 @@ def rank_substances(
 
     n_recent = wide[recent_q].sum(axis=1).astype(float)
     n_base = wide[base_q].sum(axis=1).astype(float)
+    per_q = recent_quarters / baseline_quarters
+
+    # Gate A -- share of all OD deaths. Rises when a substance takes a bigger
+    # slice of the pie, which a shrinking pie can produce on its own.
     expected = n_base * (n_recent_all / n_base_all)
 
+    # Spatial concentration (`docs/GPS_V2_DESIGN.md` #3). Aligned to the
+    # ranking's own index and zero-filled: a substance the concentration sweep
+    # never scored is "no spatial evidence", which both fusions treat as no
+    # adjustment.
+    if spatial_mode not in ("none", "discount", "prior"):
+        raise ValueError("spatial_mode must be 'none', 'discount' or 'prior'")
+    if z_spatial is None or spatial_mode == "none":
+        zs = pd.Series(0.0, index=n_recent.index)
+    else:
+        zs = z_spatial.reindex(n_recent.index).fillna(0.0).astype(float)
+    conc = pd.Series(concentration_weight(zs.to_numpy()), index=zs.index)
+
+    if spatial_mode == "discount":
+        # A concentrated substance is expected to have produced *fewer* deaths
+        # than its county-wide baseline share implies, so the same observed
+        # count is more surprising. Bounded by construction: `conc` is in
+        # [0, 1] and `spatial_weight` caps the discount, so E can never be
+        # driven to zero and no substance is ever *penalised* for being
+        # diffuse -- conc == 0 leaves E untouched.
+        expected = expected * (1.0 - spatial_weight * conc)
+
     nv, ev = n_recent.to_numpy(), expected.to_numpy()
-    prior = _fit_gps_prior(nv, ev)
-    scores = _gps_scores(nv, ev, prior)
+    zv = zs.to_numpy() if spatial_mode == "prior" else None
+
+    # phi > 1 (weighted counts, see `_credit_dispersion`) rescales both n and
+    # E down together before fitting or scoring. lambda = n/E, so the point
+    # estimate is untouched; what shrinks is the effective sample size behind
+    # it, which is the correct response to a count that carries less
+    # information per unit than a same-sized raw count would.
+    #
+    # phi_s (`_role_dispersion`, `docs/GPS_V2_DESIGN.md` #1 role discount)
+    # compounds with phi the same way, substance by substance: a substance
+    # not in the dict (below `MIN_CASES_FOR_ROLE_DISCOUNT`, or `role_discount`
+    # not requested at all) gets phi_s = 1, no additional discount.
+    phi_s_arr = np.array([phi_s.get(sub, 1.0) for sub in n_recent.index])
+    nv_c, ev_c = nv / phi / phi_s_arr, ev / phi / phi_s_arr
+    prior = _fit_gps_prior(nv_c, ev_c, z=zv)
+    scores = _gps_scores(nv_c, ev_c, prior, z=zv)
     ebgm, eb05, eb95 = scores["ebgm"], scores["eb05"], scores["eb95"]
+
+    # Gate B -- self-referential, no county-total term at all (`docs/
+    # GPS_V2_DESIGN.md` #2). Expected is just this substance's own baseline
+    # rate continued flat into the recent window, so a shrinking denominator
+    # elsewhere in the county cannot move it. This is `count_ratio`'s
+    # denominator, run back through the same GPS shrinkage as Gate A instead
+    # of reported as a raw ratio.
+    expected_own = n_base * per_q
+    if spatial_mode == "discount":
+        expected_own = expected_own * (1.0 - spatial_weight * conc)
+    ev_own = expected_own.to_numpy()
+    ev_own_c = ev_own / phi / phi_s_arr
+    prior_own = _fit_gps_prior(nv_c, ev_own_c, z=zv)
+    scores_own = _gps_scores(nv_c, ev_own_c, prior_own, z=zv)
+    ebgm_own, eb05_own, eb95_own = (scores_own["ebgm"], scores_own["eb05"],
+                                    scores_own["eb95"])
 
     seen = counts[counts["n"] > 0]
     first_seen = seen.groupby("substance")["quarter"].min()
@@ -311,7 +833,6 @@ def rank_substances(
     # count ratio alongside so the two are never confused — `count_ratio < 1`
     # with `eb05 > 1` reads "a growing share of a shrinking total", which is a
     # true statement about supply composition and a false one about deaths.
-    per_q = recent_quarters / baseline_quarters
     count_ratio = n_recent / (n_base * per_q).replace(0, np.nan)
 
     res = pd.DataFrame({
@@ -324,7 +845,20 @@ def rank_substances(
         "ebgm": ebgm,
         "eb05": eb05,
         "eb95": eb95,
+        "expected_own": expected_own,
+        "ebgm_own": ebgm_own,
+        "eb05_own": eb05_own,
+        "eb95_own": eb95_own,
+        "z_spatial": zs,
+        "concentration": conc,
     })
+    # "Credible rise" needs both gates: share up (Gate A) *and* the
+    # substance's own count above its own trend (Gate B). Cocaine-shaped
+    # cases -- share credibly up, own count flat or down -- clear A alone and
+    # land at `credible_rise == False`, which is the label
+    # `regime()` currently requires a reader to work out by hand.
+    res["credible_rise"] = (res["eb05"] > ALARM_THRESHOLD) & (
+        res["eb05_own"] > ALARM_THRESHOLD)
     res["n_total"] = wide.sum(axis=1).astype(int)
     res["first_seen"] = first_seen
     res["last_seen"] = last_seen
@@ -332,6 +866,12 @@ def rank_substances(
 
     meta = {
         "prior": prior,
+        "prior_own": prior_own,
+        "phi": phi,
+        "phi_s": phi_s,
+        "spatial_mode": spatial_mode,
+        "spatial_weight": spatial_weight if spatial_mode == "discount" else None,
+        "n_spatial_scored": int((zs != 0).sum()),
         "recent_window": (recent_q[0], recent_q[-1]),
         "baseline_window": (base_q[0], base_q[-1]),
         "n_recent_all": n_recent_all, "n_base_all": n_base_all,
@@ -340,6 +880,172 @@ def rank_substances(
         "quarters": quarters,
     }
     return res, meta
+
+
+# --------------------------------------------------------------------------
+# Conditional-Poisson diagnostic
+# --------------------------------------------------------------------------
+#
+# GPS assumes n | lambda ~ Poisson(lambda * E) *within* a substance. The
+# Gamma prior models spread *between* substances, so the observed table being
+# overdispersed is expected and is not evidence against anything -- it is the
+# signal `_fit_gps_prior` exists to measure. What breaks the closed form is
+# overdispersion in the conditional: deaths that do not arrive independently.
+#
+# The cross-section cannot see that (one (n, E) pair per substance carries no
+# information about within-substance arrival), but the quarterly series can,
+# with one caveat that dominates everything: **a substance whose rate genuinely
+# moved also fails a flat Poisson test**, because lambda really did change.
+# That is the signal, not a defect. So the statistic that matters is dispersion
+# around a *fitted trend*, not around a flat line. On the real data the gap
+# between the two is the whole diagnostic -- fentanyl falls 7.68 -> 2.19 once
+# its decline is removed and PCP falls 2.05 -> 0.86, while para-fluorofentanyl
+# holds at 10.27 -> 10.55 because its counts arrive in batches rather than at a
+# rate. See `docs/GAMMA_POISSON_PRIMER.md` step 3.
+#
+# This reports; it does not correct. Applying a per-substance phi to EB05 is a
+# defensible next step (`_credit_dispersion` already does the pooled version
+# for credit weighting) but it changes the ranking, so it wants its own
+# backtest rather than being switched on inside a diagnostic.
+
+# Below this many mentions across the window, chi-square is too far from its
+# asymptotic distribution to read -- most cells would have expected counts
+# under 5.
+MIN_TOTAL_FOR_DISPERSION = 40
+
+# D/df below this reads as materially smoother than Poisson. Coarse on
+# purpose, in the spirit of `polysubstance._verdict`: separate the obvious
+# cases, leave the rest unlabelled rather than pretending to resolve them.
+DISPERSION_SMOOTH = 0.6
+
+
+def _poisson_trend_mu(obs: np.ndarray, offset: np.ndarray) -> np.ndarray:
+    """Fitted means from ML on log(mu_q) = a + b*t + log(offset_q).
+
+    The offset is the quarter's all-OD death count, so `a + b*t` is a trend in
+    the substance's *share*. Fitting the raw count instead would read the
+    county's own 22% decline as a substance-level trend and absorb it.
+
+    Nelder-Mead on two parameters, matching `_fit_gps_prior` rather than
+    pulling in a GLM dependency; the Poisson log-likelihood is convex here, so
+    the method only has to be reliable, not clever. `t` is centred and scaled
+    because an uncentred quarter index makes the intercept and slope strongly
+    correlated and slows the simplex badly.
+    """
+    t = np.arange(len(obs), dtype=float)
+    t = (t - t.mean()) / max(t.std(), 1e-9)
+
+    def nll(p: np.ndarray) -> float:
+        lin = p[0] + p[1] * t
+        if not np.isfinite(lin).all() or lin.max() > 50:
+            return 1e12
+        mu = offset * np.exp(lin)
+        if (mu <= 0).any():
+            return 1e12
+        return float(np.sum(mu - obs * np.log(mu)))
+
+    a0 = np.log(max(obs.sum(), 0.5) / max(offset.sum(), 1e-9))
+    res = minimize(nll, np.array([a0, 0.0]), method="Nelder-Mead",
+                   options={"maxiter": 5000, "maxfev": 5000,
+                            "xatol": 1e-10, "fatol": 1e-10})
+    return offset * np.exp(res.x[0] + res.x[1] * t)
+
+
+def _dispersion_index(obs: np.ndarray, exp: np.ndarray,
+                      n_params: int) -> tuple[float, float]:
+    """Pearson dispersion D/df, and the chi-square tail probability of D.
+
+    D/df == 1 is exactly Poisson; the p-value is one-sided against the
+    overdispersed alternative, which is the direction that costs false alarms.
+    """
+    df = len(obs) - n_params
+    stat = float(((obs - exp) ** 2 / np.maximum(exp, 1e-9)).sum())
+    return stat / df, float(chi2.sf(stat, df))
+
+
+def _dispersion_verdict(d_trend: float, p_trend: float) -> str:
+    """Coarse label for whether a substance's own counts obey Poisson."""
+    if p_trend < 0.05:
+        return "clustered"
+    if d_trend < DISPERSION_SMOOTH:
+        return "smooth"
+    return "ok"
+
+
+def poisson_dispersion(
+    counts: pd.DataFrame, denom: pd.Series,
+    quarters: list[pd.Timestamp] | None = None,
+    min_total: int = MIN_TOTAL_FOR_DISPERSION,
+) -> pd.DataFrame:
+    """Per-substance check that quarterly counts vary the way Poisson demands.
+
+    Returns one row per substance with enough mentions to test, carrying:
+
+    `d_flat`   dispersion around a constant share -- inflated by any real
+               trend, so high values here mean little on their own.
+    `d_trend`  dispersion around a fitted log-linear share trend. This is the
+               one to read: it asks whether the counts scatter more than
+               Poisson allows *after* granting the substance whatever rise or
+               fall it actually had.
+    `absorbed` d_flat - d_trend, i.e. how much of the raw excess was trend.
+    `verdict`  `clustered` (Poisson rejected -- EB05's interval is too narrow
+               for this substance), `smooth` (underdispersed, so EB05 is
+               conservative), or `ok`.
+
+    A `clustered` verdict does not invalidate the substance's point estimate;
+    lambda = n/E is unaffected. What it invalidates is the *confidence*: the
+    interval should be roughly sqrt(d_trend) times wider.
+    """
+    quarters = sorted(denom.index) if quarters is None else list(quarters)
+    wide = counts.pivot_table(index="substance", columns="quarter", values="n",
+                              aggfunc="sum", fill_value=0)
+    wide = wide.reindex(columns=quarters, fill_value=0)
+    offset = denom.loc[quarters].to_numpy(dtype=float)
+
+    rows = []
+    for substance, series in wide.iterrows():
+        obs = series.to_numpy(dtype=float)
+        if obs.sum() < min_total:
+            continue
+        flat = obs.sum() * offset / offset.sum()
+        d_flat, _ = _dispersion_index(obs, flat, 1)
+        d_trend, p_trend = _dispersion_index(
+            obs, _poisson_trend_mu(obs, offset), 2)
+        rows.append({
+            "substance": substance,
+            "n_window": int(obs.sum()),
+            "d_flat": d_flat,
+            "d_trend": d_trend,
+            "absorbed": d_flat - d_trend,
+            "p_trend": p_trend,
+            "interval_scale": float(np.sqrt(max(d_trend, 0.0))),
+            "verdict": _dispersion_verdict(d_trend, p_trend),
+        })
+
+    if not rows:
+        return pd.DataFrame(
+            columns=["n_window", "d_flat", "d_trend", "absorbed", "p_trend",
+                     "interval_scale", "verdict"],
+            index=pd.Index([], name="substance"))
+    return (pd.DataFrame(rows).set_index("substance")
+            .sort_values("d_trend", ascending=False))
+
+
+def _attach_dispersion(res: pd.DataFrame, counts: pd.DataFrame,
+                       denom: pd.Series, meta: dict) -> pd.DataFrame:
+    """Join the conditional-Poisson verdict onto a ranking.
+
+    Uses exactly the quarters the ranking scored (baseline start through
+    recent end), so the diagnostic describes the same data the EB05 came from.
+    Substances below `MIN_TOTAL_FOR_DISPERSION` get NaN/`too_few` rather than a
+    number the sample cannot support.
+    """
+    lo = meta["baseline_window"][0]
+    hi = meta["recent_window"][1]
+    window = [q for q in sorted(denom.index) if lo <= q <= hi]
+    d = poisson_dispersion(counts, denom, window)
+    out = res.join(d[["d_trend", "interval_scale", "verdict"]], how="left")
+    return out.rename(columns={"verdict": "poisson"}).fillna({"poisson": "too_few"})
 
 
 def _attach_novelty(res: pd.DataFrame, mentions_path: Path) -> pd.DataFrame:
@@ -367,6 +1073,54 @@ def _fmt_window(meta: dict) -> str:
             f"{meta['n_recent_all']:,.0f} vs {meta['n_base_all']:,.0f} OD deaths")
 
 
+def _treescan_ri_live(
+    mentions_path: Path, as_of: pd.Timestamp, cutoff: str | None = CUTOFF,
+    reference: str = "deaths",
+) -> pd.Series:
+    """This quarter's TreeScan substance-leaf recurrence interval, live.
+
+    A local import: `treescan.py` imports from this module, so importing it
+    back at module load time would be circular. ~5s for one quarter's
+    9999-replicate Monte Carlo null -- fine for an interactive `rank`, and
+    orders of magnitude cheaper than the 45-quarter sweep `backtest` uses the
+    cache for instead (see `_treescan_ri_history`).
+    """
+    from emerging.analysis import treescan
+    counts, denom, ref, nodes = treescan.prepare(mentions_path, cutoff, reference)
+    res = treescan.run_scan(counts, ref, nodes, as_of)
+    leaf = res[res["level"] == "substance"]
+    return leaf.set_index("node")["recurrence_interval"]
+
+
+def _treescan_ri_history() -> pd.DataFrame:
+    """Cached historical TreeScan substance-leaf RI, one row per (substance,
+    as_of) -- `treescan backtest`'s output, reused rather than re-scanning 45
+    quarters here. Refresh with `emerging treescan backtest` if the mentions
+    data has moved since it was last written."""
+    from emerging.analysis import treescan
+    return treescan.leaf_sweep()
+
+
+def _apply_treescan_veto(
+    res: pd.DataFrame, ri: pd.Series, threshold: float = TREESCAN_VETO_THRESHOLD,
+) -> pd.DataFrame:
+    """Suppress `credible_rise` where TreeScan sees no corroborating rise.
+
+    `ri`, indexed by substance, is one quarter's TreeScan leaf recurrence
+    interval; a substance absent from it gets TreeScan's own floor (RI=1, no
+    excess at all under its case definition -- see `treescan._llr`). Adds
+    `treescan_ri` and `treescan_veto` columns and never raises `eb05` or
+    `credible_rise` -- see `TREESCAN_VETO_THRESHOLD` for why this beats the
+    symmetric ensemble combinations tried in `docs/findings/benchmark.md`.
+    """
+    out = res.copy()
+    r = ri.reindex(out.index, fill_value=1.0)
+    out["treescan_ri"] = r
+    out["treescan_veto"] = out["credible_rise"] & (r < threshold)
+    out["credible_rise"] = out["credible_rise"] & ~out["treescan_veto"]
+    return out
+
+
 @app.command("rank")
 def rank(
     mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
@@ -379,33 +1133,168 @@ def rank(
     top: int = typer.Option(25, "--top"),
     min_recent: int = typer.Option(2, "--min-recent",
                                    help="Suppress substances below this recent count"),
+    weighted: bool = typer.Option(True, "--weighted/--no-weighted",
+                                  help="Position-weighted case definition "
+                                       "(GPS_V2_DESIGN.md #1) instead of raw "
+                                       "mention counts"),
+    role_discount: bool = typer.Option(True, "--role-discount/--no-role-discount",
+                                       help="With --weighted, add each "
+                                            "substance's own phi_s "
+                                            "(_role_dispersion) -- targets "
+                                            "the Lidocaine residual a 2-line "
+                                            "co-occurrence leaves undiscounted"),
+    spatial: str = typer.Option("discount", "--spatial",
+                                help="Spatial-concentration fusion "
+                                     "(GPS_V2_DESIGN.md #3): none, discount, "
+                                     "or prior"),
+    treescan_veto: bool = typer.Option(
+        True, "--treescan-veto/--no-treescan-veto",
+        help="Suppress credible_rise where a live TreeScan scan of this "
+             "quarter sees no corroborating rise (docs/findings/"
+             "benchmark.md's ensemble-veto-v2role-10)"),
+    veto_threshold: float = typer.Option(
+        TREESCAN_VETO_THRESHOLD, "--veto-threshold",
+        help="TreeScan recurrence-interval floor below which a rise is vetoed"),
 ) -> None:
-    """Rank rising substances by EB05 and write the table."""
-    counts, denom = load_quarterly(mentions, cutoff=cutoff)
+    """Rank rising substances by EB05 and write the table.
+
+    The defaults are the project's current recommendation
+    (`docs/findings/benchmark.md`'s `ensemble-veto-v2role-10`): position-
+    weighted + role-discounted case definition, dual-gated, spatial E-
+    discount, TreeScan veto. Every piece can be switched off individually to
+    reproduce an earlier variant from that comparison, including plain EB05
+    (`--no-weighted --no-role-discount --spatial none --no-treescan-veto`).
+    """
+    counts, denom = load_quarterly(mentions, cutoff=cutoff, weighted=weighted,
+                                   role_discount=role_discount)
+    quarters = sorted(denom.index)
+    z_now = None
+    if spatial != "none":
+        z_now = _z_at(_spatial_sweep(quarters, mentions,
+                                     recent_quarters=recent_quarters),
+                      quarters[-1 - lag_quarters] if lag_quarters
+                      else quarters[-1])
     res, meta = rank_substances(counts, denom, lag_quarters,
-                                recent_quarters, baseline_quarters)
+                                recent_quarters, baseline_quarters,
+                                z_spatial=z_now, spatial_mode=spatial)
     res = _attach_novelty(res, mentions)
+    res = _attach_dispersion(res, counts, denom, meta)
+    if treescan_veto:
+        as_of = quarters[-1 - lag_quarters] if lag_quarters else quarters[-1]
+        ri = _treescan_ri_live(mentions, as_of, cutoff)
+        res = _apply_treescan_veto(res, ri, veto_threshold)
+    if spatial == "none":
+        # A column of zeros reads as "no substance is concentrated", which is
+        # false -- it means the term was switched off. Drop it rather than
+        # publish an inactive statistic that looks like a measured one.
+        res = res.drop(columns=["z_spatial", "concentration"])
 
     out_dir.mkdir(parents=True, exist_ok=True)
     res.to_csv(out_dir / "rising_substances.csv")
 
-    typer.echo(_fmt_window(meta))
+    typer.echo(_fmt_window(meta)
+               + (" [weighted+role]" if weighted and role_discount else
+                  " [weighted]" if weighted else "")
+               + (f" [spatial: {spatial}]" if spatial != "none" else "")
+               + (" [treescan-veto]" if treescan_veto else ""))
     typer.echo(_fmt_prior(meta["prior"]))
+    if weighted:
+        typer.echo(f"dispersion correction: phi={meta['phi']:.3f} "
+                   "(1.0 = no overdispersion from the credit weighting)")
+        if role_discount:
+            ps = meta["phi_s"]
+            typer.echo(f"role discount: {len(ps)} substances scored "
+                       f"(rest below MIN_CASES_FOR_ROLE_DISCOUNT), "
+                       + (f"max phi_s={max(ps.values()):.2f} "
+                          f"({max(ps, key=ps.get)})" if ps else "none scored"))
+    if spatial != "none":
+        typer.echo(f"spatial: {meta['n_spatial_scored']} substances scored "
+                   f"(rest below concentration.MIN_CASES or withheld)"
+                   + (f", gamma={meta['prior']['gamma']:+.3f}"
+                      if spatial == "prior" else
+                      f", w={meta['spatial_weight']:g}"))
     if meta["truncated_from"] is not None:
         t = meta["truncated_from"]
         typer.echo(f"dropped as incomplete: {t.year}Q{t.quarter} onward "
                    f"({lag_quarters} quarters)")
+    if treescan_veto:
+        vetoed = res[res["treescan_veto"]]
+        typer.echo(f"treescan veto: RI < {veto_threshold:g} suppresses "
+                   f"credible_rise; {len(vetoed)} substance(s) vetoed this "
+                   "quarter"
+                   + (": " + ", ".join(
+                       f"{n} (RI={r.treescan_ri:.1f})"
+                       for n, r in vetoed.iterrows()) if len(vetoed) else ""))
 
     show = res[res["n_recent"] >= min_recent].head(top)
     cols = ["n_recent", "n_baseline", "expected", "share_recent_pct",
-            "share_baseline_pct", "count_ratio", "ebgm", "eb05", "n_total",
-            "first_seen"]
+            "share_baseline_pct", "count_ratio", "ebgm", "eb05", "eb05_own",
+            "credible_rise", "poisson", "n_total", "first_seen"]
+    if treescan_veto:
+        cols = cols[:cols.index("credible_rise") + 1] + ["treescan_ri"] + \
+               cols[cols.index("credible_rise") + 1:]
     disp = show[cols].copy()
     disp["first_seen"] = disp["first_seen"].map(
         lambda t: "" if pd.isna(t) else f"{t.year}Q{t.quarter}"
     )
     typer.echo("\n" + disp.to_string(float_format=lambda v: f"{v:.2f}"))
+
+    # `poisson` qualifies the interval, not the estimate: `clustered` means
+    # this substance's deaths do not arrive independently, so its EB05 is
+    # narrower than the data supports. See `poisson_dispersion`.
+    bad = res[res["poisson"] == "clustered"]
+    if len(bad):
+        typer.echo(f"\nconditional Poisson rejected for {len(bad)} substance(s) "
+                   "-- EB05 is overconfident there: "
+                   + ", ".join(f"{n} (x{r.interval_scale:.1f})"
+                               for n, r in bad.head(6).iterrows()))
     typer.echo(f"\nwrote {out_dir / 'rising_substances.csv'}")
+
+
+@app.command("dispersion")
+def dispersion(
+    mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
+    out_dir: Path = typer.Option(RESULTS_DIR, "--out-dir"),
+    cutoff: str = typer.Option(CUTOFF, "--cutoff"),
+    recent_quarters: int = typer.Option(RECENT_QUARTERS, "--recent-quarters"),
+    baseline_quarters: int = typer.Option(BASELINE_QUARTERS, "--baseline-quarters"),
+    min_total: int = typer.Option(MIN_TOTAL_FOR_DISPERSION, "--min-total"),
+) -> None:
+    """Check the assumption EB05 rests on: do each substance's deaths arrive
+    independently, the way Poisson requires?
+
+    Read `d_trend`, not `d_flat`. A substance that genuinely rose or fell fails
+    a flat Poisson test for the best possible reason -- its rate moved -- so
+    the honest question is whether it scatters more than Poisson allows *after*
+    granting it that trend. `absorbed` is how much of the raw excess the trend
+    explained; a large `absorbed` with a small `d_trend` is a clean substance
+    that happens to be moving, which is exactly what the ranking looks for.
+
+    `clustered` does not mean the EB05 is wrong, it means it is overconfident:
+    the point estimate lambda = n/E is untouched, but the interval should be
+    about `interval_scale` times wider. The mechanism is deaths sharing a
+    source -- one contaminated batch killing several people -- which the Gamma
+    prior cannot absorb, because that layer models differences *between*
+    substances, not clustering inside one.
+    """
+    counts, denom = load_quarterly(mentions, cutoff=cutoff)
+    quarters = sorted(denom.index)[-(recent_quarters + baseline_quarters):]
+    d = poisson_dispersion(counts, denom, quarters, min_total=min_total)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    d.to_csv(out_dir / "poisson_dispersion.csv")
+
+    lo, hi = quarters[0], quarters[-1]
+    typer.echo(f"window {lo.year}Q{lo.quarter}-{hi.year}Q{hi.quarter} "
+               f"({len(quarters)} quarters); {len(d)} substances with "
+               f">= {min_total} mentions")
+    typer.echo("D/df == 1 is exactly Poisson; d_trend is the one to read.\n")
+    typer.echo(d.to_string(float_format=lambda v: f"{v:.2f}"))
+
+    n_bad = int((d["verdict"] == "clustered").sum())
+    typer.echo(f"\n{n_bad} of {len(d)} reject the conditional Poisson "
+               f"(p < 0.05): their EB05 intervals are too narrow.")
+    typer.echo(f"wrote {out_dir / 'poisson_dispersion.csv'}")
 
 
 @app.command("backtest")
@@ -417,6 +1306,26 @@ def backtest(
     substances: str = typer.Option(",".join(KNOWN_EMERGENCES), "--substances"),
     cutoff: str = typer.Option(CUTOFF, "--cutoff",
                                help="Drop quarters ending after this date"),
+    weighted: bool = typer.Option(True, "--weighted/--no-weighted",
+                                  help="Position-weighted case definition "
+                                       "(GPS_V2_DESIGN.md #1) instead of raw "
+                                       "mention counts"),
+    role_discount: bool = typer.Option(True, "--role-discount/--no-role-discount",
+                                       help="With --weighted, add each "
+                                            "substance's own phi_s "
+                                            "(_role_dispersion)"),
+    spatial: str = typer.Option("discount", "--spatial",
+                                help="Spatial-concentration fusion "
+                                     "(GPS_V2_DESIGN.md #3): none, discount, "
+                                     "or prior"),
+    treescan_veto: bool = typer.Option(
+        True, "--treescan-veto/--no-treescan-veto",
+        help="Suppress credible_rise where TreeScan's cached historical "
+             "scan (`emerging treescan backtest`) sees no corroborating "
+             "rise that quarter"),
+    veto_threshold: float = typer.Option(
+        TREESCAN_VETO_THRESHOLD, "--veto-threshold",
+        help="TreeScan recurrence-interval floor below which a rise is vetoed"),
 ) -> None:
     """Re-run the ranking as of each historical quarter and report where the
     known emergences placed.
@@ -426,11 +1335,38 @@ def backtest(
     as-of date back to the quarter each substance actually emerged answers
     "would this have caught it, and how late" — and, for LA County, mostly
     answers "there was never enough signal to catch."
+
+    Also the validation gate for `--weighted` and the dual-gate `eb05_own` /
+    `credible_rise` columns (`docs/GPS_V2_DESIGN.md`): a change that moves a
+    known emergence to a *later* detection quarter than plain, unweighted
+    single-gate EB05 is a regression in this table, not an improvement. The
+    defaults are the project's current recommendation (`docs/findings/
+    benchmark.md`'s `ensemble-veto-v2role-10`); see `rank`'s docstring.
+
+    **`--weighted` recomputes at every as-of step instead of slicing.**
+    `_ever_independent` is a cross-case aggregate (see `_position_credit`),
+    so reusing counts built from the full `cutoff`-bounded history at an
+    earlier as-of quarter would let a substance's *later* independence
+    evidence retroactively un-discount its *earlier* trailing mentions --
+    exactly the leak the as-of discipline here exists to prevent. The
+    unweighted path has no such hazard (each death's credit only ever reads
+    its own cause-line text) and keeps the cheap slice-after-the-fact it
+    always used.
+
+    **`--treescan-veto` reads the cached sweep, not a live scan per as-of
+    quarter.** A live scan is ~4.5s/quarter (`_treescan_ri_live`); over a
+    45-quarter sweep that's minutes, for a check this module's own docstring
+    already asks to be re-run often. `emerging treescan backtest` writes the
+    cache this reads; refresh it there if the mentions data has moved.
     """
-    counts, denom = load_quarterly(mentions, cutoff=cutoff)
+    counts, denom = load_quarterly(mentions, cutoff=cutoff, weighted=weighted)
     targets = [s.strip() for s in substances.split(",") if s.strip()]
     all_q = sorted(denom.index)
     total_q = recent_quarters + baseline_quarters
+    z_sweep = (_spatial_sweep(all_q, mentions, recent_quarters=recent_quarters)
+               if spatial != "none" else None)
+    ri_hist = (_treescan_ri_history().set_index(["substance", "as_of"])
+              ["recurrence_interval"] if treescan_veto else None)
 
     rows = []
     # Step the as-of quarter forward; at each step score only data available
@@ -438,11 +1374,19 @@ def backtest(
     for i in range(total_q, len(all_q) + 1):
         as_of = all_q[i - 1]
         sub_denom = denom.loc[all_q[:i]]
-        sub_counts = counts[counts["quarter"] <= as_of]
+        if weighted:
+            sub_counts, _ = load_quarterly(
+                mentions, cutoff=as_of + pd.offsets.QuarterEnd(0),
+                weighted=True, quiet=True, role_discount=role_discount)
+        else:
+            sub_counts = counts[counts["quarter"] <= as_of]
         try:
-            res, _ = rank_substances(sub_counts, sub_denom, lag_quarters=0,
-                                     recent_quarters=recent_quarters,
-                                     baseline_quarters=baseline_quarters)
+            res, _ = rank_substances(
+                sub_counts, sub_denom, lag_quarters=0,
+                recent_quarters=recent_quarters,
+                baseline_quarters=baseline_quarters,
+                z_spatial=_z_at(z_sweep, as_of) if z_sweep is not None else None,
+                spatial_mode=spatial)
         except ValueError:
             continue
         ranked = res[res["n_recent"] > 0].sort_values("eb05", ascending=False)
@@ -451,10 +1395,17 @@ def backtest(
             if s not in res.index:
                 continue
             r = res.loc[s]
+            credible_rise = bool(r["credible_rise"])
+            ri = np.nan
+            if treescan_veto:
+                ri = float(ri_hist.get((s, as_of), 1.0))
+                credible_rise = credible_rise and not (ri < veto_threshold)
             rows.append({
                 "as_of": as_of, "substance": s, "rank": order.get(s),
                 "n_recent": int(r["n_recent"]), "n_baseline": int(r["n_baseline"]),
                 "ebgm": r["ebgm"], "eb05": r["eb05"],
+                "eb05_own": r["eb05_own"], "treescan_ri": ri,
+                "credible_rise": credible_rise,
             })
 
     bt = pd.DataFrame(rows)
@@ -462,7 +1413,11 @@ def backtest(
     bt.to_csv(out_dir / "backtest_known_emergences.csv", index=False)
 
     typer.echo(f"as-of sweep: {len(all_q) - total_q + 1} quarters, "
-               f"{recent_quarters}q recent vs {baseline_quarters}q baseline\n")
+               f"{recent_quarters}q recent vs {baseline_quarters}q baseline"
+               + (" [weighted+role]" if weighted and role_discount else
+                  " [weighted]" if weighted else "")
+               + (f" [spatial: {spatial}]" if spatial != "none" else "")
+               + (" [treescan-veto]" if treescan_veto else "") + "\n")
     for s in targets:
         g = bt[bt["substance"] == s]
         if g.empty or g["n_recent"].max() == 0:
@@ -471,6 +1426,8 @@ def backtest(
         best = g.loc[g["eb05"].idxmax()]
         top10 = g[g["rank"] <= 10]
         first_top10 = top10["as_of"].min() if not top10.empty else None
+        cr = g[g["credible_rise"]]
+        first_cr = cr["as_of"].min() if not cr.empty else None
         typer.echo(
             f"{s:24s} peak EB05 {best['eb05']:.2f} (EBGM {best['ebgm']:.2f}, "
             f"n={int(best['n_recent'])}) at "
@@ -478,6 +1435,9 @@ def backtest(
             f"{int(g['rank'].min())}"
             + (f", first top-10 at {first_top10.year}Q{first_top10.quarter}"
                if first_top10 is not None else ", never reaches top 10")
+            + (f", dual gate first clears at "
+               f"{first_cr.year}Q{first_cr.quarter}"
+               if first_cr is not None else ", dual gate never clears")
         )
     typer.echo(f"\nwrote {out_dir / 'backtest_known_emergences.csv'}")
 
@@ -697,17 +1657,37 @@ def alarms(
                f"and {out_dir / 'eb05_sweep.csv'}")
 
 
+SWEEP_COLUMNS = ["n_recent", "n_baseline", "expected", "ebgm", "eb05",
+                 "eb05_own", "credible_rise", "z_spatial"]
+
+
 def sweep_eb05(
     counts: pd.DataFrame, denom: pd.Series,
     recent_quarters: int = RECENT_QUARTERS,
     baseline_quarters: int = BASELINE_QUARTERS,
+    z_sweep: pd.DataFrame | None = None,
+    spatial_mode: str = "none",
+    spatial_weight: float = SPATIAL_WEIGHT,
+    weighted: bool = False,
+    role_discount: bool = False,
+    mentions_path: Path = MENTIONS_PATH,
 ) -> pd.DataFrame:
     """Re-score *every* substance at every as-of quarter.
 
     Same as-of discipline as `backtest`, but unrestricted to the known set:
     at each step the prior is refitted and the scores computed from data
     available then, so nothing after the as-of date leaks in. Returns a long
-    frame (substance, as_of, eb05, ebgm, n_recent).
+    frame of `SWEEP_COLUMNS` plus `substance` and `as_of` — enough for every
+    model variant `validation/benchmark.py` scores to be read off one sweep
+    without re-deriving anything: `expected` carries the unshrunken n/E, the
+    two `eb05` columns carry the single and dual gates.
+
+    `spatial_mode` / `z_sweep` apply `docs/GPS_V2_DESIGN.md` #3, and
+    `weighted` (with `role_discount`) applies #1 -- with the same
+    recompute-don't-slice discipline `backtest` documents, because both
+    `_ever_independent` and `_role_dispersion` are cross-case aggregates and
+    slicing either would leak a substance's later evidence backward into its
+    earlier scores.
 
     This is the expensive command in the module — it refits the GPS prior once
     per quarter — so it is a separate CLI whose output the plots read from
@@ -718,11 +1698,19 @@ def sweep_eb05(
     frames = []
     for i in range(total_q, len(all_q) + 1):
         as_of = all_q[i - 1]
+        if weighted:
+            sub_counts, _ = load_quarterly(
+                mentions_path, cutoff=as_of + pd.offsets.QuarterEnd(0),
+                weighted=True, quiet=True, role_discount=role_discount)
+        else:
+            sub_counts = counts[counts["quarter"] <= as_of]
         res, _ = rank_substances(
-            counts[counts["quarter"] <= as_of], denom.loc[all_q[:i]],
+            sub_counts, denom.loc[all_q[:i]],
             lag_quarters=0, recent_quarters=recent_quarters,
-            baseline_quarters=baseline_quarters)
-        r = res.loc[res["n_recent"] > 0, ["n_recent", "ebgm", "eb05"]].copy()
+            baseline_quarters=baseline_quarters,
+            z_spatial=_z_at(z_sweep, as_of) if z_sweep is not None else None,
+            spatial_mode=spatial_mode, spatial_weight=spatial_weight)
+        r = res.loc[res["n_recent"] > 0, SWEEP_COLUMNS].copy()
         r["as_of"] = as_of
         frames.append(r.reset_index().rename(columns={"index": "substance"}))
     return pd.concat(frames, ignore_index=True)

@@ -6,6 +6,492 @@ not deleted — the artifact is usually the more useful record.
 
 ---
 
+## 2026-08-18 — Wired `ensemble-veto-v2role-10` in as `rank`/`backtest`'s default
+
+Moved the strongest result from the comparison framework into the live
+pipeline: `emerging trends rank` and `backtest` now default to `--weighted
+--role-discount --spatial discount --treescan-veto` (all four on), i.e.
+`eb05-v2-role` with TreeScan able to veto (never add) an alarm it sees no
+corroborating rise for at all.
+
+**New: `_apply_treescan_veto` (`emerging/analysis/trends.py`)**, plus two RI
+sources -- `_treescan_ri_live` (one quarter, ~4.5s, a local import to avoid
+the circular dependency with `treescan.py`, which already imports from
+`trends.py`) for `rank`, and `_treescan_ri_history` (the cached
+`treescan.leaf_sweep()`, effectively free) for `backtest`'s 45-quarter sweep.
+Deliberately not derived from `benchmark.py`'s `build_ensemble_sweep` --
+production code depending on the comparison/validation module would be a
+layering inversion, so the veto logic is small enough to duplicate cleanly
+rather than share.
+
+**Runtime was checked, not assumed, before committing to this as a live
+default** (a concern raised directly): `rank` goes from 2.3s to 6.8s, almost
+entirely the TreeScan veto's Monte Carlo scan (the weighted/role/spatial
+pieces add ~0.9s combined). Real but tolerable for an interactive command.
+The historical path in `backtest` avoids the expensive route entirely --
+using the cache instead of a live scan per as-of quarter keeps the full
+45-quarter run at ~38s, matching the pre-veto weighted-sweep cost, instead of
+the minutes a live per-quarter scan would cost.
+
+**Deliberately left `alarms`/`alarm_history` on plain single-gate `eb05`,
+not touched.** Its own docstring frames it as a distinct diagnostic --
+raw-`eb05`'s breach history, for false-alarm-rate and clustering analysis --
+not "the alarm system"; rewiring its comparison basis to the dual gate plus
+veto would change what it measures, not just which config it uses, so that
+was scoped out rather than done partially. Every piece of the new default
+remains independently switchable: `--no-weighted --no-role-discount
+--spatial none --no-treescan-veto` reproduces plain EB05 exactly.
+
+---
+
+## 2026-08-18 — Is `eb05-v2-role` "the best configuration"? No -- there's a frontier, not a winner
+
+Direct follow-on: does stacking the TreeScan veto (the one ensemble design
+that helped, above) on top of `eb05-v2-role` — the best *solo* GPS
+detector — improve on `eb05-v2-role` itself, or was the earlier veto result
+specific to plain `eb05-dual`?
+
+**Genuine, close-to-unambiguous improvement at `veto_threshold = 10`.**
+`ensemble-veto-v2role-10` at the matched budget: 13/22 detected (up from
+`eb05-v2-role` alone's 12), mean recall 0.39 (up from 0.37), mean IoU 0.32
+(up from 0.31), precision rate 0.81 (up from 0.80), off-target down to 1
+substance (from 4) — every column ties or improves. At the fixed line it
+avoids **6 of 7 labelled negatives, the best count anywhere in this whole
+investigation** (only Citalopram still alarms), Lidocaine included this time
+— unlike the plain-`eb05-dual` veto, which never touches Lidocaine because
+treescan agrees it's really elevated, `eb05-v2-role` already suppresses
+Lidocaine upstream via `--role-discount`, so the veto has nothing left to
+catch there.
+
+**Not proof that stacking is generally correct, though — it's still on the
+same frontier, just further along it.** Against `ensemble-veto-10` (built on
+plain `eb05-dual` instead), the `eb05-v2-role`-based version trades away real
+detections for the extra precision (13/22 vs 14/22, 0.39 vs 0.42 recall).
+Every precision-favouring mechanism compounded so far (role discount +
+spatial + dual + veto) has kept paying for itself in this backtest, but each
+layer still buys precision by spending detections, exactly like every other
+result in this file. Landed on stating this explicitly in the Verdict rather
+than naming a single winner: `docs/findings/benchmark.md` now names two
+points on the frontier (`eb05-dual`/`ensemble-veto-2` for recall,
+`ensemble-veto-v2role-10` for precision) instead of one champion.
+
+---
+
+## 2026-08-18 — Checked two intuitions about the dual gate: drop spatial, or drop Gate A
+
+Two follow-on questions about `eb05-v2-role`, both checked against the
+backtest rather than argued from priors.
+
+**Is `eb05-v2-role` actually an ensemble, or a genuinely integrated
+detector?** The latter — `--weighted`/`--role-discount` reweight the
+substance's case counts once, in `load_quarterly`, before either GPS gate is
+fit; `eb05` and `eb05_own` are then both computed from that same reweighted
+`counts` table and combined at the end via `min()`. Unlike the TreeScan
+combinations, there's one case definition run through GPS twice, not two
+independently-scored detectors glued together post hoc.
+
+**Is #3 (spatial) safe to drop as the more speculative mechanism, once #1
+extended + #2 are already in?** Checked (`eb05-dual-role`, no spatial, vs
+`eb05-v2-role`): not a clean win either way. Dropping spatial costs the
+largest single-column gap in the whole benchmark (fixed-line recall
+0.34→0.26, IoU 0.30→0.23) but gains one extra detected substance at the
+matched budget (13/22 vs 12/22). The numbers don't support the intuition
+that spatial is inert — it's still the largest measured effect in this
+comparison — though at n=22 the precision-rate CIs overlap the same way
+every pair in this file does, so it isn't a proven effect either.
+
+**Is Gate A (share) still doing anything once role/position weighting is
+already in the case definition, or would the self-referential gate alone
+(`eb05_own`, weighted + role-discounted) be a leaner equivalent?** Tested as
+`eb05-own-role`: clearly worse, not leaner — precision rate falls to 0.73
+from 0.85 and off-target load explodes to 10 substances (worst in the
+section), because a substance can have a genuinely elevated absolute count
+against its own history without that being surveillance-relevant, which is
+exactly the check Gate A's share comparison provides and a self-referential
+gate structurally cannot. The dual gate's AND is non-redundant work, not
+belt-and-suspenders. Full tables: `docs/findings/benchmark.md`.
+
+---
+
+## 2026-08-18 — A fourth ensemble design: EB05 proposes, TreeScan vetoes
+
+Follow-on to the entry below, prompted by a specific proposal: instead of
+combining `eb05-dual` and `treescan` into one score (`"mean"`, `"max"`,
+`"threshold"`, all below), let `eb05-dual` propose its own alarms unchanged
+and have `treescan` veto only the ones it sees no corroborating rise for at
+all, below a low floor well under `treescan`'s own RI 100 alarm line.
+Implemented as `combine="veto"` in `build_ensemble_sweep` — the score stays
+in the proposer's own native units except where the vetoer's raw score falls
+below `veto_threshold`, where it is floored, so it's the one combination
+where the *fixed* reading is not a scale artifact (see the "mean"/"max"
+caveat below).
+
+**This is the first ensemble design that matches or beats `eb05-dual` alone
+at both readings, rather than trading against it.** At `veto_threshold = 2`
+(RI ≥ 2 — a very low bar): detected, mean recall and mean IoU are tied or
+fractionally better than `eb05-dual` solo at both the fixed line and the
+matched budget, while off-target substances drop from 1 → 0 (fixed) and
+3 → 2 (matched). The mechanism explains why the earlier three designs
+couldn't do this: a veto only ever *removes* an alarm the vetoer flatly
+disagrees with, so it can't dilute the proposer's own best picks the way a
+shared alarm budget (`"threshold"`) or a rank average (`"mean"`, silently
+punished for the vetoer's sparse coverage) both do. At `veto_threshold = 10`
+the trade becomes explicit rather than free — 12/22 vs 14-15/22 detected —
+in exchange for zero off-target substances at both readings and the best
+matched-budget mean IoU (0.33) in the entire table. Neither veto variant
+touches Lidocaine (`treescan`'s own solo signal there clears even RI ≥ 10
+easily, so the veto correctly does not fire) — that stays `--role-discount`'s
+problem to solve, confirming the two mechanisms are complementary rather
+than redundant. Full numbers and the worked example:
+`docs/findings/benchmark.md`.
+
+---
+
+## 2026-08-18 — `eb05-v2-role`, and three ways to ensemble EB05 with TreeScan
+
+Follows directly from the TreeScan integration below: once TreeScan was in
+the same comparison as the EB05 family, the natural next questions were
+whether `eb05-v2` should absorb `--role-discount`, and whether combining
+`eb05-dual` with `treescan` beats either running alone.
+
+**`eb05-v2-role` (`weighted + role_discount + dual-gated + spatial`) Pareto-
+dominates `eb05-v2`** at both readings — equal-or-better on every column
+(precision 0.79 → 0.85 fixed, 0.75 → 0.80 matched; mean IoU up at both) with
+no real cost (the one column that moves the wrong way, mean lag, is averaged
+over only 11 substances and too thin to read as real). `eb05-v2` predates
+`--role-discount` and was never rebuilt with it. Added as a new model id
+rather than redefining `eb05-v2` in place, so `GPS_V2_DESIGN.md`'s own
+checkpoint stays reproducible as documented; `eb05-v2-role` is now the
+recommendation whenever that combination is wanted.
+
+**Three ensemble designs for `eb05-dual + treescan`, in `build_ensemble_sweep`:**
+percentile rank averaged (`"mean"`), percentile rank maxed (`"max"`), and each
+component's own already-calibrated threshold maxed (`"threshold"` — a literal
+alarm union). The first two were the obvious approach and both **lose to
+`eb05-dual` running alone** at a matched alarm budget (9/22 and 11/22 detected
+vs. 15/22) — diagnosed, not just observed: ranking a component's score among
+only the substances *that component scored that quarter* means TreeScan's
+"top-of-3-scored" on a quiet quarter and EB05-dual's "top-of-80-scored" on a
+busy one land on the same 0–1 scale, so a sparse component's opinion counts
+for as much as a dense one's regardless of how much evidence backed it up.
+Their fixed-line numbers (15/22 detected, 0.94–0.98 recall) are worthless —
+mean/max of `k` percentile ranks clusters at or above 0.5 by construction,
+independent of any real signal, which is documented prominently in
+`docs/findings/benchmark.md` next to the table that would otherwise look like
+a win. `"threshold"` (each component read at its own line, unioned) is the
+one design that adds real value: best precision rate (0.80) and cleanest
+off-target load (1 substance) of every model in the entire comparison, EB05
+family included — but it is a precision trade, not a free win, since it still
+doesn't beat `eb05-dual` alone on matched-budget recall (0.38 vs 0.43).
+Adding `ratio` as a third component made every reading worse (off-target
+1 → 7 substances at matched budget, no recall gain), which is the "floor, not
+a candidate" framing `Model`'s docstring already gives it, now checked rather
+than assumed. Full tables: `docs/findings/benchmark.md`.
+
+---
+
+## 2026-08-18 — Ground truth to 22 substances, a role-discount extension to #1, TreeScan added to the benchmark
+
+Three follow-ons to the head-to-head below, each triggered by a question about
+the benchmark itself rather than a new detector.
+
+**Ground truth grew from 5 to 22 labelled substances**
+(`data/raw/ground_truth/known_emergences.csv`), sourced from
+`alarm_history.csv`'s unlabelled breaching substances — every one that is ever
+a *primary cause of death*, deliberately excluding inert adulterants like
+lidocaine that never are, to keep the label LA-death-count-based rather than
+drug-supply-presence-based (presence necessarily precedes death by an unknown
+lag; scoring against presence would validate a different, laggily-related
+construct). 15 positive, 7 `no_emergence` negatives — the first version of
+this file had none, so no model's precision could ever be told apart from
+another's. Added Wilson score CIs (`ground_truth.wilson_ci`,
+`precision_rate`) over normal-approximation, since n is small per substance;
+substance-level (not quarter-pooled) to avoid treating one substance's
+correlated alarm-quarters as independent Bernoulli trials.
+
+**`--role-discount` extends GPS v2 #1** (`trends._role_dispersion`): a
+substance-level `phi_s`, computed from that substance's own aggregate mean
+credit across every mention (not just each death's own position), stacked on
+top of `--weighted`'s per-death discount. Answers a question `--weighted`
+structurally cannot: lidocaine's typical cause line is a plain two-item
+`[Fentanyl, Lidocaine]`, which keeps full per-death credit under position-only
+weighting no matter how often it happens. First version used
+`SOLO_CREDIT / mean(credit)` as the discount and broke `backtest` across the
+board (Bromazolam's peak EB05 2.69 → 1.00) — caught by running the actual
+backtest, not by inspection. Root cause: `_ever_independent`-exempted
+substances still rarely average near `SOLO_CREDIT = 2`, since solo mentions
+are rare for almost any real drug (checked directly: Bromazolam mean 1.000,
+Fentanyl 1.223, PCP 1.001). Fixed by rebasing on `NAMED_CREDIT = 1` with a
+`max(1.0, ...)` floor so no substance gets *amplified*. Re-validated: known
+emergences barely move, lidocaine goes from 1 alarmed quarter under
+`eb05-weighted` to 0.
+
+**TreeScan added to `emerging/validation/benchmark.py` as a ninth model**,
+run solo (`Model(statistic="treescan")`, reading its own leaf node's
+recurrence interval, no EB05 underneath it) rather than only compared
+head-to-head the way `treescan.py`'s own `backtest` command already does it.
+Reuses that command's cached Monte Carlo output (`treescan.leaf_sweep`) rather
+than re-running 45 quarters × 9999 replicates inside the benchmark. Needed a
+`fixed_threshold` override on `Model`, since TreeScan's native scale
+(recurrence interval, ~1-10,000) has nothing in common with EB05's (a
+posterior percentile, ~0-3) — the shared `--threshold` would be meaningless
+applied to it. Result: lowest `detected` in the table (8/22) but cleanest by
+far on off-target load (1 unlabelled substance ever alarmed, vs 3-7 for every
+EB05 variant) and best lag on what it does catch — a different failure shape,
+not a strictly worse detector, and it does *not* solve lidocaine (5 alarmed
+quarters, worse than plain EB05's 4) since nothing in its case definition
+discounts cause-line position. This comparison only exercises TreeScan's
+substance-leaf reading; its actual case (branch-level aggregation for
+substances too thin to score alone) is untested by construction — see
+`docs/findings/benchmark.md`'s caveats section. Full tables and the
+per-negative breakdown: `docs/findings/benchmark.md`; `docs/findings/
+ground_truth.md` for the 22-substance reference and its definitions.
+
+---
+
+## 2026-08-18 — GPS v2 §3 (spatial concentration), and a head-to-head of every detector
+
+Closes the last open component of `docs/GPS_V2_DESIGN.md` and then, because
+three extensions each validated separately against plain EB05 still do not say
+which detector to run, scores all seven side by side
+(`emerging/validation/benchmark.py`, `docs/findings/benchmark.md`).
+
+**The `z_s` §3 asked for did not exist, and the obvious source could not be
+made to work.** The design note is right that `geo.py`'s lifetime localization
+ratio is the wrong input — PCP's Skid Row cluster is real and a decade old,
+and letting stable historical geography lower the bar for an unrelated event
+is the failure this whole component is meant to avoid — and it points at
+`spacetime.py`'s trailing cylinders instead. That turns out to be unusable
+for the purpose on two counts: 999 permutations per substance cannot be run 45
+times over an as-of sweep, and `MIN_CASES = 20` leaves it undefined for four
+of the five labelled emergences.
+
+**What shipped: exact null moments instead of a permutation test**
+(`emerging/core/concentration.py`). A Cuzick–Edwards-style case-control
+clustering count — ordered pairs of a substance's deaths that are spatial
+neighbours, over the symmetrized k-NN graph on all overdose deaths in the
+trailing window, k = 5% of the window. Under the same random-labelling null
+`geo.py` defends, that statistic has closed-form mean and variance, so
+`z_s` is one sparse mat-vec per substance and the whole 45-quarter ×
+211-substance sweep costs **4.6 seconds**. The derivation is the load-bearing
+claim, so it is checked against 4,000 draws from the null it describes at
+C ∈ {5, 10, 30, 100} rather than against intuition — mean and sd match
+throughout.
+
+*Two designs measured and rejected first, both on real data:* zipcode cells
+(background co-location probability 0.009, so a 6-death substance scores S = 0
+three quarters of the time — no resolution where it is needed), and a fixed
+radius (valid, but its power goes to "is this substance downtown" rather than
+to concentration, because degree tracks density). k-NN at a fixed *fraction*
+is density-adaptive and scale-free the way `spacetime.MAX_SPATIAL_FRACTION`
+is.
+
+*The floor is not decorative.* At C = 3 the statistic can only be 0, 2, 4 or
+6, so one coincidental pair is four standard deviations — diphenhydramine
+scored z = 6.7 on three deaths before `MIN_CASES = 10` was added. The
+simulated tail rate at C = 5 is 10.6% against a nominal 5%, and at C = 10 it
+is 6.1%; that table is what sets the floor.
+
+**Positive result: it tracks onset, and the decay is the interesting part.**
+para-Fluorofentanyl scores z = 3.18 in 2021Q2, the quarter after its first LA
+death, and decays to −1.83 by 2022Q3 as it saturates the county-wide fentanyl
+supply. Mitragynine scores 4.63 at its onset, carfentanil 3.47 at its 2024
+cluster. A substance appearing in a few places and then diffusing is the shape
+a point-source hypothesis predicts, and it is now a number rather than an
+impression from a map. PCP (3.84) and cocaine (5.19) corroborate `geo.py` and
+`relrisk.py` from a different statistic on a different window.
+
+**Negative result: the E-discount fallback fails, and it fails in the way the
+design note warned about for a different mechanism.** Read at the fixed 1.5
+line it posts the best recall in the benchmark (0.44 vs plain EB05's 0.38).
+Re-cut so it raises the *same 85 substance-quarter alarms*, it drops to 0.40 —
+and the substance it appeared to gain, xylazine, has `z_s` identically zero in
+all 45 quarters, so the discount cannot have moved xylazine at all. It moved
+the threshold, by inflating every scored substance's EB05 at once. §3 rejects
+`EBGM × spatial_RR` for silently discarding the conservative-bound property;
+the discount arrives at the same place through the back door.
+
+**The covariate-adjusted prior is the one to keep, because it can decline to
+act.** `beta_s = beta_0 · exp(−γ · z_s)` with γ estimated by the same MLE:
+fitted γ at the current quarter is **+0.061**, and the model lands within 0.01
+of plain EB05 on both readings. That is the property `w = 0.25` structurally
+cannot have — a chosen weight applies itself whatever the data say. The design
+note called this "less principled"; the benchmark shows it is not an
+aesthetic objection but the mechanism of the fallback's failure.
+
+**The benchmark, and why it is read twice.** Seven models — raw `n/E`, classic
+EB05, and the five variants — scored against the ground-truth intervals at a
+fixed line and at a matched alarm budget. The matched reading exists because
+this repository already learned the lesson once: the tree-scan head-to-head
+(2026-08-10) found an apparent earlier-detection advantage that disappeared
+once its budget was matched to EB05's.
+
+  - *Shrinkage is the one thing here that unambiguously earns its complexity.*
+    Raw `n/E` looks best at the fixed line (recall 0.54, all five found) and
+    is worst by a wide margin at matched budget (0.24, one emergence lost, 85
+    alarms spread over 37 substances against EB05's 19). At the fixed line it
+    raises **872** alarm-quarters — ten times every other model. That is not a
+    detector, it is a list. `trends.py` has asserted this since it was
+    written; it is now measured.
+  - *None of the three GPS v2 extensions improves on plain EB05.* At matched
+    budget the six shrinkage models span 0.35–0.40 mean recall. Five labelled
+    substances contribute 57 reference quarters, so that whole spread is about
+    four quarters of overlap — inside what a couple of differently-timed
+    deaths would move. The honest reading is "unresolved", not "eb05-dual
+    wins".
+  - *Where the spatial term does act it acts correctly, and the limit is power
+    not modelling.* Its matched-budget gains are on para-fluorofentanyl
+    (recall 0.40 → 0.45, detection lag 1 quarter → 0) and mitragynine (0.13 →
+    0.20) — exactly the two substances that clear `MIN_CASES` through their
+    emergence, in exactly the quarters where z is 3.18 and 4.63.
+  - *`eb05-v2` trades a substance for a quarter of lead time.* Best detection
+    lag in the table (1.50 vs 2.20 quarters) and one of two models that miss
+    an emergence outright — xylazine, in both readings. `GPS_V2_DESIGN.md` §1
+    predicted this ("xylazine never clears the §2 dual gate under
+    `--weighted`"); the benchmark confirms it end to end. Two independent 1.5
+    crossings at n = 7 is a materially harder bar than one.
+
+**Decision: plain EB05 stays the default.** `--weighted`, `--spatial` and the
+dual gate remain available as what they always were — diagnostics answering
+specific questions (adulterant or driver, denominator drift, localized or
+diffuse) — not as a better ranking.
+
+*The binding constraint is now the reference set, not the statistic.* Five
+labelled substances cannot resolve a 0.05 difference in mean recall, and most
+of the table sits inside that. A better detector cannot be *demonstrated* on
+this many labels however good it is, which makes growing
+`known_emergences.csv` the highest-value next move for this line of work.
+
+*Recorded so it is not re-litigated:* `off_target_quarters` in the benchmark
+counts alarms on unlabelled substances. It is a reviewer load, not a
+false-positive rate — lidocaine and PCP both alarm for documented reasons and
+neither is in the reference file. It is reported because a detector firing on
+109 substances costs something real, not because those 109 are wrong.
+
+---
+
+## 2026-08-18 — GPS v2: position weighting, a dual gate, and a ground-truth reference for `backtest`
+
+Prompted by a literature-review discussion of the "keep GPS, triangulate
+around it" verdict: three formalizations of the corroborating checks
+(`polysubstance.py`'s position analysis, `regime()`'s denominator-drift
+diagnostic, spatial concentration) into the ranking statistic itself, rather
+than downstream cross-references a reader has to reconcile by hand. Full
+design record, including two rejected variants and open questions, in
+`docs/GPS_V2_DESIGN.md`. Only the first two of the three are built; the third
+(spatial concentration in the GPS prior) is still a proposal.
+
+**1. Position-weighted case definition — failed its own validation gate, was
+fixed, and the fix taught a general lesson.** `trends rank --weighted` /
+`trends backtest --weighted` replace the raw mention count with an integer
+credit from cause-line position (`_credit_from_order`): full credit for a
+solo mention, discounted to zero for a substance named last on a 3+-substance
+line — the adulterant pattern documented for lidocaine (last on 82% of its
+lines, first on none). Two problems surfaced in that order, both caught by
+running the thing rather than reasoning about it:
+
+  - *The scheme was overdispersed, not merely integer-valued.* The design note
+    first argued integer credit was enough to keep `_nb_logpmf`'s Poisson
+    assumption intact. It is not — dispersion, not integer-vs-float, is the
+    property that matters, and any credit spread across `{0, 1, 2}` has
+    `E[c²] > E[c]`, i.e. more variance than a same-mean Poisson. On this
+    repository's data it inflated the false-`EB05>1` rate from 5.1/203
+    substances (raw counts) to 19.0/203. Fixed with a quasi-likelihood
+    dispersion correction (`_credit_dispersion`, φ = E[c²]/E[c] ≈ 1.42
+    measured directly off the credit distribution): divide both `n` and every
+    `expected` array by φ before fitting — restores the false-alarm rate to
+    4.9/203, back in line with raw counts.
+  - *Even dispersion-corrected, it regressed a known emergence.* `backtest
+    --weighted` — the validation the design note specified before trusting
+    this — showed xylazine's peak EB05 dropping from 1.93 to 1.05 and its best
+    rank from 4 to 12, never reaching top-10. Cause: xylazine is a fentanyl
+    adulterant by *pattern* (habitually trailing, same surface shape as
+    lidocaine) but not by *pharmacology* — it is exactly the kind of emerging
+    contaminant this pipeline exists to flag, not an inert cutting agent.
+    Cause-line position measures "was this compound clinically dominant in
+    this death," a different construct from "should surveillance care about
+    it," and the credit scheme conflated them. Fixed with `_ever_independent`:
+    a substance that has ever been named alone or first *anywhere in its
+    history* is exempted from the trailing discount everywhere, even in cases
+    where it is itself trailing. Clean separation on real data — lidocaine and
+    levamisole (known inert adulterants) are solo-or-lead **zero** times
+    across 42 and 12 lifetime mentions; xylazine clears it once, the quarter
+    before its emergence is detected. Xylazine's peak EB05 recovers to 1.46,
+    best rank to 5, top-10 restored at 2024Q3 (one quarter behind unweighted).
+
+  `_ever_independent` is a cross-case aggregate, unlike per-death credit
+  (which only ever reads that one death's own text and so cannot leak
+  future information forward). Computing it once from the full history and
+  reusing it for every earlier `backtest` quarter would let a substance's
+  *later* proof of independence retroactively un-discount its *earlier*
+  trailing mentions. Fixed by bounding `load_quarterly`'s credit computation
+  to its own `cutoff` (previously unbounded — latent, harmless for per-death
+  credit, would not have been for this) and having `backtest --weighted`
+  recompute fresh at every as-of step instead of slicing one precomputed
+  table. Cost: ~40s for the full 45-quarter sweep, still cheap.
+
+  **Still open:** xylazine never clears the dual gate below under
+  `--weighted` — at its peak (n=7) EB05 is 1.46 and `eb05_own` is 1.32, both
+  just under 1.5. Signal ceiling at low n (`RESEARCH_LOG.md`'s prior finding:
+  three of five known emergences sit at n < 10, where Poisson noise binds, not
+  the estimator), not a defect in the fix. `--weighted` stays opt-in, not a
+  default.
+
+**2. Joint dual gate for denominator drift — validated cleanly, no caveats.**
+`eb05_own` and `credible_rise` columns on `rank`/`backtest`: a second GPS fit
+whose `expected` is the substance's own baseline rate continued flat
+(`n_base * recent_quarters/baseline_quarters`, no county-total term), run
+alongside the existing share-based fit. "Credible rise" now requires both to
+clear the alarm line. Formalizes what `regime()`'s `count_ratio` diagnostic
+already showed by hand (cocaine: EB05 1.06 on a shrinking total, count itself
+flat-to-down) into a labelled cell in the ranking output. All five known
+emergences still clear the joint gate in `backtest`, at a cost of at most one
+extra quarter of lag.
+
+**Housekeeping this needed.** `causea_order`/`rollup_map` moved out of
+`polysubstance.py` into `emerging/core/causeline.py`, once `trends.py` needed
+the same cause-line ordering — same reasoning as the `core/spatial.py`
+extraction in the reorg above, applied to a second case.
+
+**3. A ground-truth reference for scoring `backtest`, and the metric it
+enables.** `backtest` had no independent record of *when* an emergence
+actually started or ended — only whether the ranking noticed it eventually.
+Added `data/raw/ground_truth/known_emergences.csv`: one row per known local
+emergence interval (a substance may have more than one), each carrying its
+provenance. To avoid validating EB05 against labels derived from EB05, the
+rule is fixed and reads only *raw* quarterly mention counts: a run of ≥2
+consecutive quarters each ≥2, following ≥2 consecutive quarters each ≤1.
+That rule fails outright on carfentanil and xylazine — both too sparse and
+volatile at low n to ever post two qualifying consecutive quarters — so
+those two intervals are hand-annotated, with the rule's failure and the
+reasoning both written into the CSV. `national_context` carries cited
+external evidence (DEA alerts, CDC MMWR, trade press, pulled this session)
+for when each substance became a recognised threat *nationally*; it is
+context for a reader, not ground truth for LA's own timing, since the
+question this project asks is whether LA's local picture lags or leads the
+national one.
+
+`emerging/validation/ground_truth.py` (`interval_overlap`, temporal-IoU-style,
+tested independent of any real data) scores the EB05 alarm sweep's detected
+episodes against this reference. Result on the current five: **precision
+1.00 across the board** — every alarm quarter these five substances ever
+raised fell inside a real emergence window, no false alarms against this
+reference. Recall is low for three of five (para-Fluorofentanyl 0.40,
+mitragynine 0.13, xylazine 0.14), and **this is a construct mismatch, not a
+detector failure** — the reference measures *presence* (still showing up in
+LA deaths at all) while EB05 measures *growth* (still rising relative to its
+own recent baseline), and a substance can stay present for years after its
+growth phase ends. Para-Fluorofentanyl is the clean case: raw counts never
+return to near-zero through 2025Q4, so the presence-based reference stays
+open for 20 quarters, while EB05 correctly stops alarming once growth levels
+off around 2023Q1 — which is also exactly what this log already reports
+independently as a credible *decline* (EB95 0.37). Full table and discussion
+in `docs/findings/ground_truth.md`. Open question, not resolved: whether the
+reference schema should separately annotate an "actively rising"
+sub-interval so recall doesn't need this caveat attached every time.
+
+---
+
 ## 2026-08-18 — Reorganisation, and three reproducibility defects it exposed
 
 Structural only: no method changed, and 24 result tables were regenerated

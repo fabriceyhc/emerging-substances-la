@@ -19,9 +19,9 @@ in this directory depends on.
 emerging/
   paths.py  config.py  viz.py  cli.py   shared: where, what window, what colour
   ingest/      cohort  lexicon  extract  census
-  core/        tree  spatial
+  core/        tree  spatial  causeline  concentration
   analysis/    trends  treescan  geo  spacetime  svtt  relrisk  nowcast  polysubstance
-  validation/  treescan_validate
+  validation/  treescan_validate  ground_truth  benchmark
 results/<analysis>/    tables and figures for that module, together
 docs/findings/<analysis>.md    what it found and what to distrust
 tests/test_<analysis>.py
@@ -49,9 +49,12 @@ Or one at a time — `emerging --help` lists all of them:
 emerging lexicon       build     # alias -> canonical map
 emerging extract       extract   # decedent x substance table
 emerging extract       validate  # score vs the 8 coded flags
-emerging trends        rank      # EB05 ranking
-emerging trends        backtest  # does the detector fire?
-emerging trends        alarms    # every breach, ever  (run before plot)
+emerging trends        rank      # ranking, default = weighted+role+dual+spatial+treescan-veto
+emerging trends        backtest  # does the default detector fire?
+emerging trends        alarms    # every plain-EB05 breach, ever  (run before plot)
+emerging ground-truth  score     # alarm episodes vs known emergences
+emerging benchmark     run       # every detector variant, side by side
+emerging benchmark     plot
 emerging trends        watch     # national watchlist vs LA
 emerging trends        regime    # recording artifacts that move EB05
 emerging trends        plot      # five figures
@@ -94,6 +97,8 @@ keeps its own Typer app.
 | `ingest/cohort.py` | overdose-death cohort definition — **a vendored copy**, see below |
 | `core/tree.py` | the substance hierarchy — NFLIS categories plus a pharmacological family layer; **the domain-knowledge core**, a scan can only find branches this file encodes |
 | `core/spatial.py` | projection, geocoded cohort, facility flag, and the case-fraction guard — shared by every spatial analysis |
+| `core/causeline.py` | the ME's cause line turned into a per-case ordered substance sequence — position, not presence |
+| `core/concentration.py` | spatial concentration of a substance's *recent* deaths as one standardized number, with closed-form null moments instead of a permutation test |
 | `analysis/trends.py` | gamma-Poisson empirical-Bayes ranking, as-of backtest, alarm history, watchlist, recording diagnostics, figures |
 | `analysis/treescan.py` | tree-temporal scan statistic: every node × every recent window, with a Monte Carlo p-value adjusted for the whole search |
 | `analysis/polysubstance.py` | is a flagged substance a cause of death or a passenger — co-occurrence plus position on the ME's cause line |
@@ -103,6 +108,8 @@ keeps its own Typer app.
 | `analysis/nowcast.py` | reporting-delay curve from extract vintages, with a guard that refuses to apply it when the target extract does not obey it |
 | `analysis/relrisk.py` | Kelsall–Diggle log relative-risk surface, CV-selected bandwidth, random-labelling tolerance contours |
 | `validation/treescan_validate.py` | exports our tree/counts to TreeScan's input format and diffs the two implementations — needs the binary, which is not in the repo |
+| `validation/ground_truth.py` | scores detected alarm episodes against hand-curated emergence intervals by temporal overlap |
+| `validation/benchmark.py` | every detector variant on one table, read at a fixed line and at a matched alarm budget |
 | `config.py` | study-design parameters shared across analyses (`CUTOFF`, `SINCE`, the windows) |
 | `viz.py` | the plot palette |
 | `paths.py` | where the data lives; `results_dir()` gives each analysis its own output directory |
@@ -150,6 +157,7 @@ calibrated, and which artifacts would have manufactured a false result.
 |---|---|
 | [Extraction and validation](docs/findings/extract.md) | precision/recall against the ME's coded flags; why coverage is 99.8% |
 | [EB05 ranking](docs/findings/trends.md) | does the ranking work, how the expected count is computed, four caveats that change conclusions |
+| [Poisson assumption check](docs/findings/dispersion.md) | whether each substance's deaths arrive independently; 9 of 21 do not |
 | [Tree-temporal scan](docs/findings/treescan.md) | scanning the hierarchy; validation against the TreeScan binary |
 | [Cause or passenger](docs/findings/polysubstance.md) | co-occurrence and position on the cause line |
 | [Spatial localization](docs/findings/geo.md) | is it localized, and the provenance of the method |
@@ -157,6 +165,9 @@ calibrated, and which artifacts would have manufactured a false result.
 | [Spatial variation in trends](docs/findings/svtt.md) | where mortality is rising fastest; the Pomona Valley |
 | [Reporting delay](docs/findings/nowcast.md) | how complete the recent quarters are; the correction that is withheld |
 | [Relative-risk surface](docs/findings/relrisk.md) | PCP; three bugs that each produced a plausible wrong map |
+| [Ground-truth overlap](docs/findings/ground_truth.md) | alarm episodes against curated emergence intervals; the presence-vs-growth mismatch |
+| [Spatial concentration](docs/findings/concentration.md) | the GPS v2 §3 score; exact null moments, and the count floor below which it says nothing |
+| [Detector head-to-head](docs/findings/benchmark.md) | seven variants scored twice; why shrinkage wins and none of the three extensions does |
 
 - [`docs/RESEARCH_LOG.md`](docs/RESEARCH_LOG.md) — current state, game plan, and
   the artifacts that would have manufactured false results
@@ -173,7 +184,11 @@ calibrated, and which artifacts would have manufactured a false result.
   mitragynine clear that. Spatial remains a characterization tool for
   substances the temporal detector already named — which is exactly what
   `geo.py` does, and it is deliberately downstream of `trends`, never a
-  detector in its own right.
+  detector in its own right. `core/concentration.py` folds a *cheap* spatial
+  term into the ranking itself (GPS v2 §3), and lowers that bar to n≥10 rather
+  than removing it: xylazine, at 9 lifetime mentions, scores identically zero
+  in all 45 quarters. The benchmark measures what the term buys where it does
+  apply, which is about half a quarter of lead time on two substances.
 - **Occupancy-detection modeling.** Separating "absent" from "not tested for"
   needs detection probability to vary across units. One ME office running one
   evolving panel gives no such variation — every zip shares the same lab. This

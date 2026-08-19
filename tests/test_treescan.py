@@ -138,6 +138,29 @@ def test_dedupe_keeps_the_more_specific_label() -> None:
     assert "A" in kept and "Solo cat" not in kept
 
 
+def test_leaf_sweep_keeps_only_substance_nodes_and_renames_to_substance(tmp_path) -> None:
+    """`benchmark.py` reads this as an eb05-sweep-shaped table -- a `node`
+    column named `substance`, with branch/category/root rows (which are not
+    individual-substance detections and have no counterpart in the ground
+    truth) dropped rather than silently scored against it."""
+    import pandas as pd
+    df = pd.DataFrame([
+        {"as_of": "2024-01-01", "node": "Fentanyl", "level": "substance",
+         "recurrence_interval": 500.0, "p_value": 0.002, "llr": 9.0},
+        {"as_of": "2024-01-01", "node": "Fentanyl analogs", "level": "family",
+         "recurrence_interval": 200.0, "p_value": 0.005, "llr": 7.0},
+        {"as_of": "2024-01-01", "node": "Opioids", "level": "superclass",
+         "recurrence_interval": 50.0, "p_value": 0.02, "llr": 4.0},
+    ])
+    path = tmp_path / "backtest.csv"
+    df.to_csv(path, index=False)
+
+    sw = treescan.leaf_sweep(path)
+    assert list(sw["substance"]) == ["Fentanyl"]
+    assert set(sw.columns) == {"substance", "as_of", "recurrence_interval",
+                               "p_value", "llr"}
+
+
 def test_fentanyl_analogs_excludes_fentanyl_itself() -> None:
     """The regex family would otherwise become a proxy for the parent drug."""
     import pandas as pd

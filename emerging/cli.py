@@ -25,7 +25,7 @@ from emerging.analysis import (geo, nowcast, polysubstance, relrisk,
                                 spacetime, svtt, treescan, trends)
 from emerging.core import tree
 from emerging.ingest import census, extract, lexicon
-from emerging.validation import treescan_validate
+from emerging.validation import benchmark, ground_truth, treescan_validate
 
 app = typer.Typer(
     add_completion=False,
@@ -49,6 +49,9 @@ for _name, _mod, _help in [
     ("svtt", svtt, "spatial variation in temporal trends"),
     ("nowcast", nowcast, "reporting-delay curve and completeness"),
     ("relrisk", relrisk, "Kelsall-Diggle relative-risk surface"),
+    ("ground-truth", ground_truth, "score alarm episodes against known "
+                                   "local emergences by interval overlap"),
+    ("benchmark", benchmark, "every detector variant, scored side by side"),
 ]:
     app.add_typer(_mod.app, name=_name, help=_help)
 
@@ -64,7 +67,10 @@ PIPELINE: list[tuple[str, str]] = [
     ("extract", "validate"),
     ("trends", "rank"),
     ("trends", "backtest"),
-    ("trends", "alarms"),      # before `trends plot`
+    ("trends", "alarms"),      # before `trends plot` and `ground-truth score`
+    ("ground-truth", "score"),
+    ("benchmark", "run"),
+    ("benchmark", "plot"),
     ("trends", "watch"),
     ("trends", "regime"),
     ("trends", "plot"),

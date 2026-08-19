@@ -307,6 +307,26 @@ def run_scan(
     return out.sort_values("llr", ascending=False).reset_index(drop=True)
 
 
+def leaf_sweep(path: Path = BACKTEST_PATH) -> pd.DataFrame:
+    """Substance-leaf rows from a cached `treescan backtest` run, reshaped to
+    the (substance, as_of, score) shape `emerging.validation.benchmark` reads
+    every other detector's sweep from.
+
+    Re-running the scan here (45 as-of quarters x N_SIM Monte Carlo replicates
+    each) is the expensive part of `backtest`, and it already computes every
+    node including the substance leaves -- `backtest` just doesn't write out
+    the zero-LLR rows. So this reads the cache rather than re-scanning; if the
+    mentions data or scan parameters have moved since it was written, re-run
+    `emerging treescan backtest` first.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found -- run "
+                                f"`emerging treescan backtest` first")
+    df = pd.read_csv(path, parse_dates=["as_of"])
+    leaf = df[df["level"] == "substance"].rename(columns={"node": "substance"})
+    return leaf[["substance", "as_of", "recurrence_interval", "p_value", "llr"]]
+
+
 def _q(t: pd.Timestamp) -> str:
     return f"{t.year}Q{t.quarter}"
 
