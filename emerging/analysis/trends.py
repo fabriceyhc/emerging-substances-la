@@ -106,6 +106,19 @@ KNOWN_EMERGENCES = [
 ALARM_THRESHOLD = 1.5
 ALARM_PATH = RESULTS_DIR / "alarm_history.csv"
 
+# Average pre-rise quarterly death count below which an alarm is also
+# annotated `emergent`, not merely `credible_rise`. "Rising" (EB05) and
+# "was rare" are separate axes -- fentanyl and PCP clear the alarm line while
+# already killing 3.4-3.9/quarter before their rise even starts, which is a
+# supply shift in an established killer, not an emergence. Read off the same
+# backtest as `ALARM_THRESHOLD`: at first breach the four known LA
+# emergences' *baseline* average (`n_baseline` at that quarter, divided by
+# `baseline_quarters`) is 0-1.125/quarter, with a clean gap to PCP (3.375)
+# and fentanyl (3.875) -- the two alarms in `alarm_history.csv` that are
+# obviously not emergences. A chosen reading line, like `ALARM_THRESHOLD`
+# itself, not a fitted one.
+EMERGENT_THRESHOLD = 2.0
+
 # TreeScan veto floor, as a recurrence interval (`emerging.analysis.treescan`).
 # `credible_rise` is suppressed only when TreeScan's own, independent
 # substance-leaf scan sees essentially no excess at all this quarter -- far
@@ -1622,6 +1635,26 @@ def alarms(
     recent_quarters: int = typer.Option(RECENT_QUARTERS, "--recent-quarters"),
     baseline_quarters: int = typer.Option(BASELINE_QUARTERS, "--baseline-quarters"),
     threshold: float = typer.Option(ALARM_THRESHOLD, "--threshold"),
+    weighted: bool = typer.Option(True, "--weighted/--no-weighted",
+                                  help="Position-weighted case definition "
+                                       "(GPS_V2_DESIGN.md #1) instead of raw "
+                                       "mention counts"),
+    role_discount: bool = typer.Option(True, "--role-discount/--no-role-discount",
+                                       help="With --weighted, add each "
+                                            "substance's own phi_s "
+                                            "(_role_dispersion)"),
+    spatial: str = typer.Option("discount", "--spatial",
+                                help="Spatial-concentration fusion "
+                                     "(GPS_V2_DESIGN.md #3): none, discount, "
+                                     "or prior"),
+    treescan_veto: bool = typer.Option(
+        True, "--treescan-veto/--no-treescan-veto",
+        help="Suppress credible_rise where TreeScan's cached historical "
+             "scan (`emerging treescan backtest`) sees no corroborating "
+             "rise that quarter"),
+    veto_threshold: float = typer.Option(
+        TREESCAN_VETO_THRESHOLD, "--veto-threshold",
+        help="TreeScan recurrence-interval floor below which a rise is vetoed"),
 ) -> None:
     """Sweep every substance across every as-of quarter and record when each
     one crossed the alarm line.
@@ -1630,28 +1663,55 @@ def alarms(
     complementary question — "what has it ever fired on at all" — which is the
     only way to see the false-alarm rate and the clustering of onsets. It
     writes both the full sweep (for plotting) and the per-substance summary.
+
+    The defaults match `rank`/`backtest`'s current recommendation, and "in
+    alarm" here means `credible_rise` (the dual gate, TreeScan-vetoed) rather
+    than the looser single-gate `eb05 > threshold` -- the same episodes the
+    deployed detector would actually have raised. `--threshold` still governs
+    the dual gate's own two `eb05 > threshold` tests (see `rank_substances`),
+    just no longer as a *separate*, single-gate alarm definition.
     """
-    counts, denom = load_quarterly(mentions, cutoff=cutoff)
-    sw = sweep_eb05(counts, denom, recent_quarters, baseline_quarters)
+    counts, denom = load_quarterly(mentions, cutoff=cutoff, weighted=weighted,
+                                   role_discount=role_discount)
+    all_q = sorted(denom.index)
+    z_sweep = (_spatial_sweep(all_q, mentions, recent_quarters=recent_quarters)
+               if spatial != "none" else None)
+    sw = sweep_eb05(counts, denom, recent_quarters, baseline_quarters,
+                    z_sweep=z_sweep, spatial_mode=spatial,
+                    weighted=weighted, role_discount=role_discount,
+                    mentions_path=mentions)
+    if treescan_veto:
+        ri_hist = (_treescan_ri_history()
+                  .set_index(["substance", "as_of"])["recurrence_interval"])
+        sw = sw.set_index(["substance", "as_of"])
+        sw["treescan_ri"] = ri_hist.reindex(sw.index, fill_value=1.0)
+        sw["credible_rise"] = sw["credible_rise"] & (sw["treescan_ri"] >= veto_threshold)
+        sw = sw.reset_index()
+
     seen = counts[counts["n"] > 0].groupby("substance")["quarter"].min()
     hist = alarm_history(sw, seen, max(denom.index), threshold,
-                         first_q=min(denom.index))
+                         first_q=min(denom.index), gate_col="credible_rise",
+                         baseline_quarters=baseline_quarters)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     sw.to_csv(out_dir / "eb05_sweep.csv", index=False)
     hist.to_csv(out_dir / ALARM_PATH.name)
 
     q = lambda t: "" if pd.isna(t) else f"{t.year}Q{t.quarter}"  # noqa: E731
-    all_q = sorted(denom.index)
     typer.echo(f"swept {len(all_q) - recent_quarters - baseline_quarters + 1} "
                f"as-of quarters over {sw['substance'].nunique()} substances; "
-               f"{len(hist)} ever exceeded EB05 {threshold}\n")
+               f"{len(hist)} ever fired EB05+"
+               + (" [weighted+role]" if weighted and role_discount else
+                  " [weighted]" if weighted else "")
+               + (f" [spatial: {spatial}]" if spatial != "none" else "")
+               + (" [treescan-veto]" if treescan_veto else "") + "\n")
     disp = hist.copy()
-    for c in ("first_seen", "first_breach", "last_breach", "peak_as_of"):
+    for c in ("first_seen", "first_breach", "last_breach", "peak_as_of",
+              "latest_onset"):
         disp[c] = disp[c].map(q)
     cols = ["first_seen", "first_breach", "lag_quarters", "last_breach",
             "quarters_in_alarm", "n_episodes", "peak_eb05", "n_at_peak",
-            "still_open"]
+            "still_open", "latest_onset", "avg_baseline_deaths_q", "emergent"]
     typer.echo(disp[cols].to_string(float_format=lambda v: f"{v:.2f}"))
     typer.echo(f"\nwrote {out_dir / ALARM_PATH.name} "
                f"and {out_dir / 'eb05_sweep.csv'}")
@@ -1740,6 +1800,8 @@ def _episodes(quarters: list[pd.Timestamp]) -> list[tuple]:
 def alarm_history(
     sweep: pd.DataFrame, first_seen: pd.Series, last_as_of: pd.Timestamp,
     threshold: float = ALARM_THRESHOLD, first_q: pd.Timestamp | None = None,
+    gate_col: str | None = None, baseline_quarters: int = BASELINE_QUARTERS,
+    emergent_threshold: float = EMERGENT_THRESHOLD,
 ) -> pd.DataFrame:
     """Per-substance alarm record: onset, first breach, end, peak, duration.
 
@@ -1759,20 +1821,57 @@ def alarm_history(
     nonsense: it was never detected late, it was simply always here and only
     recently grew. Those rows are flagged `first_seen_censored` and their lag
     is NaN, not a number.
+
+    `gate_col`, when given, names a boolean column in `sweep` (e.g.
+    `credible_rise`, already dual-gated and optionally TreeScan-vetoed by the
+    caller) that defines "in alarm" instead of the legacy single-gate
+    `eb05 > threshold`. `peak_eb05`/`peak_as_of` still read off `eb05` either
+    way -- the gate changes which quarters count, not what "peak" means.
+
+    **`emergent` is a second, independent axis from "in alarm".** `eb05`
+    answers "is this substance's share credibly rising"; `emergent` answers
+    the different question "was it previously rare enough that a rise means
+    something new", read off `avg_baseline_deaths_q` -- `n_baseline` at
+    `latest_onset` (the `baseline_quarters` immediately before the *most
+    recent* alarm episode started) divided by `baseline_quarters`.
+
+    Anchored on `latest_onset` rather than `first_breach` on purpose. A
+    substance can alarm, subside, and alarm again years later (`n_episodes`
+    already tracks this) -- fentanyl's 2016-2021 rise and a hypothetical
+    fresh 2025 one would be two episodes of the same row. Reading the
+    baseline off the *first* episode would judge a 2025 rise by how rare
+    fentanyl was in 2014, which is not the question "is this rise, now,
+    something new" is asking. `latest_onset` is the start of `_episodes`'
+    last run, so a substance with one episode reads the same baseline either
+    way and only a repeat-offender's classification can change between
+    episodes.
+
+    Also anchored on a *baseline* window rather than the recent or blended
+    count: gating on a window that includes the rise itself would let a
+    substance's own growth push it past the count threshold and silently
+    un-label it as emergent right when the rise is most newsworthy. Every
+    substance can be both rising and established (fentanyl, PCP -- already
+    killing 3+/quarter before their most recent rise) or rising and emergent
+    (xylazine, para-fluorofentanyl -- at or near zero beforehand); `emergent`
+    is an annotation on top of `credible_rise`/`eb05 > threshold`, not a
+    separate detector, and rows that never breach never get one.
     """
     rows = []
     for sub, g in sweep.groupby("substance"):
         g = g.sort_values("as_of")
-        hot = g[g["eb05"] > threshold]
+        hot = g[g[gate_col]] if gate_col else g[g["eb05"] > threshold]
         if hot.empty:
             continue
         eps = _episodes(list(hot["as_of"]))
         peak = g.loc[g["eb05"].idxmax()]
         fs = first_seen.get(sub, pd.NaT)
         first_breach = hot["as_of"].min()
+        latest_onset = eps[-1][0]
         censored = bool(first_q is not None and pd.notna(fs) and fs <= first_q)
         lag = ((first_breach.year - fs.year) * 4 + first_breach.quarter
                - fs.quarter) if pd.notna(fs) else np.nan
+        avg_baseline_q = (float(g.loc[g["as_of"] == latest_onset, "n_baseline"]
+                                .iloc[0]) / baseline_quarters)
         rows.append({
             "substance": sub,
             "first_seen": fs,
@@ -1790,15 +1889,19 @@ def alarm_history(
             "peak_as_of": peak["as_of"],
             "n_at_peak": int(peak["n_recent"]),
             "still_open": bool(hot["as_of"].max() == last_as_of),
+            "latest_onset": latest_onset,
+            "avg_baseline_deaths_q": avg_baseline_q,
+            "emergent": avg_baseline_q < emergent_threshold,
         })
     return (pd.DataFrame(rows).set_index("substance")
             .sort_values("first_breach"))
 
 
 def _episode_spans(sweep: pd.DataFrame, sub: str,
-                   threshold: float) -> list[tuple]:
+                   threshold: float, gate_col: str | None = None) -> list[tuple]:
     g = sweep[sweep["substance"] == sub].sort_values("as_of")
-    return _episodes(list(g.loc[g["eb05"] > threshold, "as_of"]))
+    mask = g[gate_col] if gate_col else (g["eb05"] > threshold)
+    return _episodes(list(g.loc[mask, "as_of"]))
 
 
 def _quarterly_series(counts: pd.DataFrame, substance: str,
@@ -1808,9 +1911,20 @@ def _quarterly_series(counts: pd.DataFrame, substance: str,
     return s
 
 
+def _bold_title(name: str) -> str:
+    """Bold a substance name for a matplotlib panel title via inline
+    mathtext (`ax.set_title` renders a `$...$` span as math and leaves the
+    rest of the string as plain text, so this can sit mid-title). A bare
+    space or hyphen inside `\\mathbf` gets mathtext's math spacing -- a
+    dropped gap, or a wide padded minus sign -- rather than reading as
+    ordinary text, so both are escaped."""
+    escaped = name.replace(" ", r"\ ").replace("-", r"\text{-}")
+    return r"$\mathbf{" + escaped + "}$"
+
+
 def _panel(ax, x, y, title: str, color: str, first_seen=None,
            trunc_from=None, annotate_last: bool = True,
-           alarm_spans: list | None = None) -> None:
+           alarm_spans: list | None = None, badge: str | None = None) -> None:
     """One small-multiple panel.
 
     Complete quarters are drawn solid; the right-truncated tail is drawn muted
@@ -1820,6 +1934,10 @@ def _panel(ax, x, y, title: str, color: str, first_seen=None,
     `alarm_spans` shades the quarters in which EB05 exceeded the alarm line, so
     the detector's verdict is visible against the raw counts that produced it —
     the point being that the shading starts on the *upslope*, not at the peak.
+
+    `badge`, when given, draws a small filled rounded-rect label in the top
+    right corner -- a CSS-tag look, `emergent` read at a glance rather than
+    parsed out of the title text.
     """
     x = list(x)
     n_complete = (sum(1 for q in x if q < trunc_from) if trunc_from is not None
@@ -1854,6 +1972,11 @@ def _panel(ax, x, y, title: str, color: str, first_seen=None,
                     textcoords="offset points", xytext=(4, 2),
                     fontsize=8, color=INK_2)
     ax.set_title(title, fontsize=9.5, color=INK, loc="left", pad=4)
+    if badge:
+        ax.text(1.0, 1.30, badge, transform=ax.transAxes, ha="right",
+                va="bottom", fontsize=6.5, color="white", fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.32,rounding_size=0.5",
+                          facecolor=ORANGE, edgecolor="none"), zorder=5)
     ax.tick_params(labelsize=7.5, colors=INK_2, length=2)
     ax.grid(axis="y", color=MUTED, alpha=0.35, linewidth=0.6)
     ax.set_axisbelow(True)
@@ -1879,11 +2002,51 @@ def plot(
         "2012-01-01", "--heatmap-start",
         help="Heatmap x-axis start; defaults to the beginning of the extract"),
     threshold: float = typer.Option(ALARM_THRESHOLD, "--threshold"),
+    weighted: bool = typer.Option(True, "--weighted/--no-weighted",
+                                  help="Position-weighted case definition "
+                                       "(GPS_V2_DESIGN.md #1) instead of raw "
+                                       "mention counts"),
+    role_discount: bool = typer.Option(True, "--role-discount/--no-role-discount",
+                                       help="With --weighted, add each "
+                                            "substance's own phi_s "
+                                            "(_role_dispersion)"),
+    spatial: str = typer.Option("discount", "--spatial",
+                                help="Spatial-concentration fusion "
+                                     "(GPS_V2_DESIGN.md #3): none, discount, "
+                                     "or prior"),
+    treescan_veto: bool = typer.Option(
+        True, "--treescan-veto/--no-treescan-veto",
+        help="Suppress credible_rise (today's ranking) where a live "
+             "TreeScan scan sees no corroborating rise"),
+    veto_threshold: float = typer.Option(
+        TREESCAN_VETO_THRESHOLD, "--veto-threshold",
+        help="TreeScan recurrence-interval floor below which a rise is vetoed"),
 ) -> None:
-    """Render the figures."""
-    counts, denom = load_quarterly(mentions, cutoff=cutoff)
+    """Render the figures.
+
+    `res` (today's ranking, used for labels in figures 1/2/4) uses the same
+    defaults as `rank` -- current recommendation, live TreeScan veto. The
+    alarm bands and figure 5's episodes are read from `eb05_sweep.csv` /
+    `alarm_history.csv` on disk (`credible_rise`, already dual-gated and
+    TreeScan-vetoed by whatever flags `alarms` was last run with) rather than
+    recomputed here -- see `alarms`.
+    """
+    counts, denom = load_quarterly(mentions, cutoff=cutoff, weighted=weighted,
+                                   role_discount=role_discount)
+    quarters = sorted(denom.index)
+    z_now = None
+    if spatial != "none":
+        z_now = _z_at(_spatial_sweep(quarters, mentions,
+                                     recent_quarters=recent_quarters),
+                      quarters[-1 - lag_quarters] if lag_quarters
+                      else quarters[-1])
     res, meta = rank_substances(counts, denom, lag_quarters,
-                                recent_quarters, baseline_quarters)
+                                recent_quarters, baseline_quarters,
+                                z_spatial=z_now, spatial_mode=spatial)
+    if treescan_veto:
+        as_of = quarters[-1 - lag_quarters] if lag_quarters else quarters[-1]
+        ri = _treescan_ri_live(mentions, as_of, cutoff)
+        res = _apply_treescan_veto(res, ri, veto_threshold)
     res = _attach_novelty(res, mentions)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1910,7 +2073,8 @@ def plot(
     def spans(name: str) -> list:
         if sweep is None:
             return []
-        return [(s, e) for s, e in _episode_spans(sweep, name, threshold)
+        return [(s, e) for s, e in _episode_spans(
+                    sweep, name, threshold, gate_col="credible_rise")
                 if e >= q_plot[0]]
 
     # --- Figure 1: rising candidates, small multiples -------------------
@@ -1922,20 +2086,27 @@ def plot(
     axes = np.atleast_1d(axes).ravel()
     for ax, (name, row) in zip(axes, cand.iterrows()):
         s = _quarterly_series(counts, name, q_plot)
-        t = f"{name}\nEB05 {row.eb05:.1f}  n={int(row.n_recent)}"
+        is_emergent = bool(hist is not None and name in hist.index
+                           and hist.loc[name, "emergent"])
+        t = f"{_bold_title(name)}  (n={int(row.n_recent)})"
+        t += f"\nEB05+ {row.eb05:.1f}"
         if hist is not None and name in hist.index:
             b = hist.loc[name, "first_breach"]
             t += f"  · fired {b.year}Q{b.quarter}"
         _panel(ax, q_plot, s, t, BLUE, row["first_seen"], trunc_from,
-               alarm_spans=spans(name))
+               alarm_spans=spans(name),
+               badge="EMERGENT" if is_emergent else None)
     for ax in axes[len(cand):]:
         ax.set_visible(False)
     fig.suptitle("Substances rising fastest in LA County overdose deaths\n"
-                 f"ranked by EB05 (gamma-Poisson shrunken growth); {window}",
+                 f"ranked by EB05+ (gamma-Poisson shrunken growth); {window}",
                  fontsize=11, color=INK, x=0.01, ha="left")
-    caption = (f"Quarterly deaths naming the substance. Dotted orange = first "
-               f"LACME appearance. Yellow band = quarters with EB05 > "
-               f"{threshold:g}; its left edge is when the detector fired.")
+    caption = (f"Quarterly deaths naming the substance. Orange EMERGENT tag "
+               f"= averaged under {EMERGENT_THRESHOLD:g}/quarter before its "
+               f"most recent rise; untagged panels are a credible rise in an "
+               f"already-established substance. Dotted orange = first LACME "
+               f"appearance.\nYellow band = quarters EB05+ actually fired; "
+               f"its left edge is when it first fired.")
     if trunc_from is not None:
         caption += (" Dashed grey tail = incomplete reporting, excluded from "
                     "the statistic — the drop there is pending toxicology, not "
@@ -1944,7 +2115,7 @@ def plot(
         caption += (f" Series end at {q_plot[-1].year}Q{q_plot[-1].quarter}; "
                     "later quarters are excluded as unsettled toxicology.")
     fig.text(0.01, 0.005, caption, fontsize=7.5, color=INK_2, ha="left")
-    fig.tight_layout(rect=(0, 0.02, 1, 0.93))
+    fig.tight_layout(rect=(0, 0.045, 1, 0.93))
     fig.savefig(out_dir / "rising_candidates.png", dpi=150,
                 bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -1978,7 +2149,7 @@ def plot(
         ax.scatter(fired["date_added"], fired["first_seen"],
                    s=90 + 9 * np.sqrt(fired["n_total"]), facecolors="none",
                    edgecolors=YELLOW, linewidths=2.0, zorder=4,
-                   label=f"has breached EB05 {threshold:g}")
+                   label="has fired EB05+")
 
     lo = min(sc["date_added"].min(), sc["first_seen"].min())
     hi = max(sc["date_added"].max(), sc["first_seen"].max())
@@ -2059,8 +2230,8 @@ def plot(
         "entry. Not early detection — NFLIS catalogues substances as forensic "
         "labs report them in seized drug\nevidence, and these are prescription "
         "antihistamines that are found at autopsy but rarely seized. "
-        f"Yellow rings mark substances that have breached EB05 {threshold:g}; "
-        "the quarter is the first breach.",
+        "Yellow rings mark substances that have fired EB05+; "
+        "the quarter is the first time.",
         fontsize=8, color=INK_2, ha="left", va="top")
 
     ax.set_title(
@@ -2077,7 +2248,7 @@ def plot(
         handles.append(plt.Line2D(
             [], [], marker="o", linestyle="", markersize=10,
             markerfacecolor="none", markeredgecolor=YELLOW, markeredgewidth=2,
-            label=f"has breached EB05 {threshold:g} at some point"))
+            label="has fired EB05+ at some point"))
     ax.legend(handles=handles, frameon=False, fontsize=8.5, loc="lower right")
     ax.grid(color=MUTED, alpha=0.35, linewidth=0.6)
     ax.set_axisbelow(True)
@@ -2165,22 +2336,26 @@ def plot(
     for ax, name in zip(axes, present):
         s = _quarterly_series(counts, name, q_plot)
         fs = res.loc[name, "first_seen"] if name in res.index else None
-        sub = f"{name}\nn={int(s.sum())}"
+        sub = f"{_bold_title(name)}  n={int(s.sum())}"
         if hist is not None and name in hist.index:
             h = hist.loc[name]
-            sub += f" · fired {h.first_breach.year}Q{h.first_breach.quarter}"
+            sub += f"\nfired {h.first_breach.year}Q{h.first_breach.quarter}"
             if pd.notna(h.lag_quarters):
                 sub += f" (+{int(h.lag_quarters)}q)"
+            sub += f", peak {h.peak_eb05:.1f}"
+        elif sweep is not None:
+            g = sweep[sweep["substance"] == name]
+            if len(g):
+                sub += f"\nnever fired, peak {g['eb05'].max():.1f}"
         _panel(ax, q_plot, s, sub, BLUE, fs, trunc_from,
                alarm_spans=spans(name))
-    fig.suptitle("Known emerging substances in LA County — the backtest set\n"
-                 "counts are small (xylazine: 9 lifetime), but the EB05 sweep "
-                 "still ranks all five top-4 at emergence — see `backtest`",
+    fig.suptitle("Known emerging substances in LA County\n"
+                 "quarterly deaths naming each substance, with EB05+'s alarm history",
                  fontsize=11, color=INK, x=0.01, ha="left")
     fig.text(0.01, 0.005,
-             f"Yellow band = quarters with EB05 > {threshold:g}; its left edge "
-             "is when the detector would have fired. Dotted orange = first LA "
-             "death. (+Nq) = quarters between the two.",
+             "Yellow band = quarters EB05+ actually fired; its left edge is "
+             "when it first fired. Dotted orange = first LA death. (+Nq) = "
+             "quarters between the two.",
              fontsize=7.5, color=INK_2, ha="left")
     fig.tight_layout(rect=(0, 0.05, 1, 0.86))
     fig.savefig(out_dir / "known_emergences.png", dpi=150,
@@ -2214,7 +2389,8 @@ def plot(
                            marker="<" if cens else "o", s=30 if cens else 26,
                            c=MUTED if cens else "white", edgecolors=INK_2,
                            linewidths=1.1, zorder=4)
-            for s, e in _episode_spans(sweep, name, threshold):
+            for s, e in _episode_spans(sweep, name, threshold,
+                                       gate_col="credible_rise"):
                 ax.barh(i, e + pd.offsets.QuarterEnd(0) - s, left=s,
                         height=0.52, color=ORANGE if r["still_open"] else BLUE,
                         edgecolor="white", linewidth=0.8, zorder=3)
@@ -2258,7 +2434,7 @@ def plot(
                        markeredgecolor=INK_2, markersize=7,
                        label="already present when LACME records start (2012)"),
             plt.Rectangle((0, 0), 1, 1, facecolor=BLUE,
-                          label=f"in alarm (EB05 > {threshold:g})"),
+                          label="in alarm (EB05+)"),
             plt.Line2D([], [], marker="D", linestyle="", color=YELLOW,
                        markeredgecolor="white", markersize=7,
                        label="peak EB05"),
@@ -2275,8 +2451,8 @@ def plot(
         n_scored = sweep["substance"].nunique()
         ax.set_title(
             "Every substance the detector has ever fired on, and when\n"
-            f"{len(h)} of {n_scored} substances have exceeded EB05 "
-            f"{threshold:g} across {n_swept} as-of quarters. The number at each "
+            f"{len(h)} of {n_scored} substances have fired EB05+ "
+            f"across {n_swept} as-of quarters. The number at each "
             "bar is the detection delay — quarters from the first LA death to "
             "the first breach — and is shown only where arrival is observed, "
             "not censored.",

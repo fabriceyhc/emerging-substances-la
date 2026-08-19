@@ -6,6 +6,79 @@ not deleted — the artifact is usually the more useful record.
 
 ---
 
+## 2026-08-19 — `emergent` is a second axis on `alarm_history`, not a second detector
+
+A question about the project's framing surfaced a gap: `alarm_history.csv`
+tracks every substance that ever clears `credible_rise`, and the write-up
+calls a subset of those "emergent" by hand, but nothing in the table said
+which. Fentanyl and PCP breach the alarm line the same as xylazine or
+para-fluorofentanyl, and treating all four as one category erases the
+distinction that actually matters for a reader — "growing share of deaths"
+(what EB05 measures) and "was this rare before it grew" are independent
+questions, and a substance already killing hundreds a quarter can have a
+statistically real, alarm-worthy rise without being a new threat.
+
+**Added `avg_baseline_deaths_q`, `latest_onset` and `emergent` to
+`alarm_history()` (`emerging/analysis/trends.py`).** `n_baseline` from the
+sweep (raw count over the `baseline_quarters` immediately *before* the rise)
+divided by `baseline_quarters` gives a pre-rise average death rate;
+`emergent = avg_baseline_deaths_q < EMERGENT_THRESHOLD` (2.0/quarter, a
+chosen reading line calibrated the same way `ALARM_THRESHOLD` was — off the
+backtest, not fitted). On the current sweep this cleanly separates the two
+groups: Fentanyl (3.88/quarter) and PCP (3.38–10.38, below) are the only
+breaching substances that fail it; every other alarm — Citalopram, Etizolam,
+Clonazepam, Flualprazolam, para-Fluorofentanyl, Acetyl fentanyl, Mitragynine,
+Ketamine, Bromazolam, Carfentanil — sits at 0-1.5/quarter and passes.
+
+**Anchored on the baseline window specifically, not recent or blended,
+because the obvious alternative self-cancels.** Gating on a window that
+includes the rise itself would let a substance's own growth push its average
+past the threshold and un-label it as emergent right when the rise is most
+newsworthy — the more alarming the trajectory, the less likely the flag
+would survive it.
+
+**And anchored on the *latest* episode's onset, not the first.** A substance
+can alarm, subside for years, and alarm again — `n_episodes`/`_episodes`
+already track this, and the first version of this change read the baseline
+off `first_breach` regardless. That is wrong for a repeat offender: fentanyl
+first breached in 2016Q3 off a 2014-2016 baseline of 3.88/quarter, but if it
+alarmed again today the relevant question is how rare it was *before this
+rise*, not before the one nine years ago. Fixed by reading `n_baseline` at
+`latest_onset = eps[-1][0]` (the start of `_episodes`' last run) instead.
+Single-episode substances are unaffected — `latest_onset == first_breach`
+whenever `n_episodes == 1`, which is every current row but PCP. PCP's second
+episode (2021Q4) reads baseline 10.38/quarter, off a window that already
+includes its own first episode — a stronger "not emergent" read than the
+first-breach version's 3.38, for the same underlying reason `_role_dispersion`
+and the position-weighted case definition keep re-learning: a substance's own
+recent history is never a neutral yardstick for it once it has already been
+elevated.
+
+**This is deliberately not a new detection line.** `emergent` never fires on
+its own — only annotates rows `credible_rise`/`eb05 > threshold` already
+selected — for the same reason `alarms`' own docstring keeps it a distinct
+diagnostic from `rank`/`backtest`'s dual gate: conflating "is this real" with
+"is this new" would change what the table measures, not just add a column to
+it. A hard count cutoff will still flicker at its own boundary the way raw
+ratios did before EB05 shrinkage was added for the growth question — a
+substance sitting at 1.9 vs 2.1 baseline deaths/quarter isn't epidemiologically
+different — so `avg_baseline_deaths_q` is kept alongside the boolean rather
+than only the collapsed flag, and `EMERGENT_THRESHOLD` is documented as a
+convention, not a significance test, exactly like `ALARM_THRESHOLD`.
+
+**Surfaced on `rising_candidates.png` too, not just the CSV.** `_panel`
+(`trends.py`) takes an optional `badge` and draws it as a small filled
+rounded-rect in the panel's top-right corner — an orange `EMERGENT` tag,
+CSS-chip style, rather than folding it into the title text where it would
+have to compete with `_bold_title`'s existing mathtext escaping. Panel
+ordering stays plain EB05+ (unchanged) rather than grouping emergent
+candidates first — sorting by tag was tried and reverted, since the ranking
+axis and the annotation axis are supposed to stay visibly separate, the same
+point the CSV-side design makes. The caption line was long enough to need a
+manual break before "Yellow band =" — `fig.text` does not reflow on its own.
+
+---
+
 ## 2026-08-19 — Reading TreeScan at its branches: the aggregation the benchmark had never exercised
 
 `benchmark.py`'s `treescan` row was always the substance-**leaf** node's
