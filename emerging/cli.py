@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import typer
 
-from emerging.analysis import (geo, nowcast, polysubstance, relrisk,
-                                spacetime, svtt, treescan, trends)
+from emerging.analysis import (aberration, geo, nowcast, polysubstance,
+                                relrisk, spacetime, svtt, treescan, trends)
 from emerging.core import tree
 from emerging.ingest import census, extract, lexicon
 from emerging.validation import benchmark, ground_truth, treescan_validate
@@ -41,6 +41,8 @@ for _name, _mod, _help in [
     ("census", census, "ACS resident population per zip per year"),
     ("tree", tree, "the substance hierarchy the scans run over"),
     ("trends", trends, "gamma-Poisson empirical-Bayes ranking (EB05)"),
+    ("aberration", aberration, "model-the-curve family: EARS z-score and "
+                               "Poisson trend-slope Wald z"),
     ("treescan", treescan, "tree-temporal scan statistic"),
     ("treescan-validate", treescan_validate, "diff against the TreeScan binary"),
     ("polysubstance", polysubstance, "cause of death, or passenger"),
@@ -66,6 +68,7 @@ PIPELINE: list[tuple[str, str]] = [
     ("extract", "extract"),
     ("extract", "validate"),
     ("trends", "rank"),
+    ("aberration", "rank"),    # reads alongside `trends rank`, not before it
     ("trends", "backtest"),
     ("trends", "alarms"),      # before `trends plot` and `ground-truth score`
     ("ground-truth", "score"),

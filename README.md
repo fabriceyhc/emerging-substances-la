@@ -50,6 +50,7 @@ emerging lexicon       build     # alias -> canonical map
 emerging extract       extract   # decedent x substance table
 emerging extract       validate  # score vs the 8 coded flags
 emerging trends        rank      # ranking, default = weighted+role+dual+spatial+treescan-veto
+emerging aberration    rank      # model-the-curve family: nb-trend/ears + emergent annotation
 emerging trends        backtest  # does the default detector fire?
 emerging trends        alarms    # every plain-EB05 breach, ever  (run before plot)
 emerging ground-truth  score     # alarm episodes vs known emergences
@@ -100,6 +101,7 @@ keeps its own Typer app.
 | `core/causeline.py` | the ME's cause line turned into a per-case ordered substance sequence — position, not presence |
 | `core/concentration.py` | spatial concentration of a substance's *recent* deaths as one standardized number, with closed-form null moments instead of a permutation test |
 | `analysis/trends.py` | gamma-Poisson empirical-Bayes ranking, as-of backtest, alarm history, watchlist, recording diagnostics, figures |
+| `analysis/aberration.py` | model-the-curve family: EARS moving-baseline z-score, Poisson trend-slope Wald z, and the `emergent` (EMERGENT_THRESHOLD) annotation — complementary to EB05, see `docs/LITERATURE_REVIEW.md` sec 1.5 |
 | `analysis/treescan.py` | tree-temporal scan statistic: every node × every recent window, with a Monte Carlo p-value adjusted for the whole search |
 | `analysis/polysubstance.py` | is a flagged substance a cause of death or a passenger — co-occurrence plus position on the ME's cause line |
 | `analysis/geo.py` | case-control permutation test for spatial localization against the overdose-death background |

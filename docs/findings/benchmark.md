@@ -97,6 +97,20 @@ alongside it, not as a replacement.
 | treescan-branch (branches, unguarded) | 12/22 | 0.39 | 0.40 | 0.63 [0.41, 0.81] | 0.23 | 2.92 | **389** | 56 |
 | treescan-branch-attr (branches, share ≥ 15%) | 10/22 | 0.34 | 0.70 | 0.77 [0.50, 0.92] | 0.27 | 2.10 | 105 | 7 |
 | **treescan-tree (leaves + attributed branches)** | 11/22 | **0.44** | 0.70 | 0.73 [0.48, 0.89] | **0.34** | 1.64 | 121 | 7 |
+| ears (EARS C2, moving-baseline z-score) | 11/22 | 0.23 | 0.79 | 0.79 [0.52, 0.92] | 0.19 | 2.09 | 43 | **0** |
+| nb-trend (Poisson trend slope, Wald z) | 14/22 | **0.49** | 0.73 | 0.78 [0.55, 0.91] | **0.37** | 1.79 | 161 | 11 |
+| nb-trend-own (own-count trend, no denominator) | 14/22 | 0.53 | 0.64 | 0.70 [0.48, 0.85] | 0.36 | 1.43 | 299 | 25 |
+| nb-trend-dual (min of the two above) | 14/22 | 0.45 | 0.74 | 0.78 [0.55, 0.91] | 0.35 | 1.86 | 146 | 9 |
+| nb-trend-emergent (gated by the EMERGENT_THRESHOLD analogue) | 10/22 | 0.31 | 0.67 | 0.71 [0.45, 0.88] | 0.25 | 1.50 | 69 | **7** |
+| ears-weighted-role (#1 extended, ported) | 11/22 | 0.22 | 0.79 | 0.79 [0.52, 0.92] | 0.18 | 2.09 | 40 | **0** |
+| nb-trend-weighted-role (#1 extended, ported) | 14/22 | 0.51 | 0.73 | 0.78 [0.55, 0.91] | **0.39** | 1.71 | 157 | 16 |
+| nb-trend-dual-weighted-role (#1 extended, ported) | 14/22 | 0.49 | 0.75 | 0.78 [0.55, 0.91] | 0.38 | 1.71 | 137 | 13 |
+| ensemble-threshold-nbtrend (eb05-dual OR nb-trend) | 14/22 | **0.52** | 0.63 | 0.67 [0.45, 0.83] | 0.36 | 1.50 | 170 | 12 |
+| ensemble-veto-eb05dual-nbtrend-0 (eb05-dual, nb-trend vetoes < z 0) | 14/22 | 0.36 | 0.74 | 0.74 [0.51, 0.88] | 0.28 | 1.79 | 75 | 1 |
+| ensemble-veto-eb05dual-nbtrend-1 (eb05-dual, nb-trend vetoes < z 1) | 14/22 | 0.36 | 0.78 | 0.78 [0.55, 0.91] | 0.28 | 1.79 | 73 | **0** |
+| ensemble-veto-nbtrend-ears-0 (nb-trend, ears vetoes < z 0) | 14/22 | 0.49 | 0.73 | 0.78 [0.55, 0.91] | 0.37 | 1.79 | 161 | 11 |
+| ensemble-veto-nbtrend-ears-1 (nb-trend, ears vetoes < z 1) | 14/22 | 0.45 | 0.73 | 0.78 [0.55, 0.91] | 0.34 | 1.79 | 143 | 8 |
+| ensemble-veto-v2role-nbtrend-1 (eb05-v2-role, nb-trend vetoes < z 1) | 11/22 | 0.34 | 0.85 | 0.85 [0.58, 0.96] | 0.30 | 1.36 | 69 | **0** |
 | ensemble-mean (eb05-dual + treescan, rank) | 15/22 | 0.94 | 0.43 | 0.68 [0.47, 0.84] | 0.40 | 0.13 | 1585 | 94 |
 | ensemble-max (eb05-dual + treescan, rank) | 15/22 | 0.98 | 0.41 | 0.68 [0.47, 0.84] | 0.40 | 0.00 | 1811 | 127 |
 | ensemble-threshold (eb05-dual OR treescan) | 14/22 | 0.42 | 0.70 | 0.70 [0.48, 0.85] | 0.31 | 1.71 | 96 | 2 |
@@ -130,6 +144,20 @@ below for what these rows actually show.
 | treescan-branch | RI 10,000 (uncuttable) | 12/22 | 0.31 | 0.50 | 0.63 [0.41, 0.81] | 0.19 | 3.17 | 30 |
 | treescan-branch-attr | RI 500 | 9/22 | 0.30 | 0.67 | 0.75 [0.47, 0.91] | 0.25 | 2.11 | 3 |
 | **treescan-tree** | RI 3,333 | 10/22 | 0.36 | 0.77 | 0.77 [0.50, 0.92] | 0.30 | 1.60 | 2 |
+| ears | 2.08 | 14/22 | 0.39 | 0.73 | 0.78 [0.55, 0.91] | 0.30 | 1.43 | 5 |
+| nb-trend | 2.61 | 11/22 | 0.25 | 0.91 | **0.92 [0.65, 0.99]** | 0.23 | 2.09 | 4 |
+| nb-trend-own | 4.32 | 4/22 | 0.09 | 0.66 | 0.67 [0.30, 0.90] | 0.08 | 1.75 | 4 |
+| nb-trend-dual | 2.48 | 11/22 | 0.25 | 0.91 | **0.92 [0.65, 0.99]** | 0.23 | 2.00 | 4 |
+| nb-trend-emergent | 1.96 | 10/22 | 0.31 | 0.67 | 0.71 [0.45, 0.88] | 0.25 | 1.50 | 7 |
+| ears-weighted-role | 2.17 | 14/22 | 0.38 | 0.73 | 0.78 [0.55, 0.91] | 0.28 | 1.50 | 7 |
+| nb-trend-weighted-role | 2.54 | 12/22 | 0.29 | 0.80 | 0.80 [0.55, 0.93] | 0.24 | 2.17 | 3 |
+| nb-trend-dual-weighted-role | 2.37 | **13/22** | 0.30 | 0.81 | 0.81 [0.57, 0.93] | 0.25 | 2.08 | 3 |
+| ensemble-threshold-nbtrend | 1.44 | 11/22 | 0.31 | 0.91 | **0.92 [0.65, 0.99]** | 0.29 | 1.73 | **2** |
+| ensemble-veto-eb05dual-nbtrend-0 | 1.43 | **15/22** | 0.43 | 0.72 | 0.75 [0.53, 0.89] | 0.32 | 1.60 | 3 |
+| ensemble-veto-eb05dual-nbtrend-1 | 1.37 | **15/22** | **0.44** | 0.72 | 0.75 [0.53, 0.89] | 0.32 | 1.67 | 2 |
+| ensemble-veto-nbtrend-ears-0 | 2.61 | 11/22 | 0.25 | 0.91 | **0.92 [0.65, 0.99]** | 0.23 | 2.09 | 4 |
+| ensemble-veto-nbtrend-ears-1 | 2.60 | 11/22 | 0.25 | 0.91 | **0.92 [0.65, 0.99]** | 0.23 | 2.09 | 4 |
+| ensemble-veto-v2role-nbtrend-1 | 1.38 | 12/22 | 0.37 | 0.79 | 0.80 [0.55, 0.93] | 0.31 | 1.42 | 3 |
 | ensemble-mean | rank 0.98 | 9/22 | 0.30 | 0.67 | 0.69 [0.42, 0.87] | 0.24 | 1.33 | 2 |
 | ensemble-max | rank 0.99 | 11/22 | 0.33 | 0.69 | 0.73 [0.48, 0.89] | 0.26 | 1.73 | 3 |
 | ensemble-threshold | 1.25× | 12/22 | 0.38 | 0.80 | 0.80 [0.55, 0.93] | 0.32 | 1.58 | 1 |
@@ -525,6 +553,352 @@ exactly the population a precision-oriented veto wants to keep blocking.
 `ensemble-veto-v2role-10` keeps the leaf-only vetoer, and that choice is now
 checked rather than inherited.
 
+## A different family entirely: EARS and NB-trend, from `docs/LITERATURE_REVIEW.md` sec 1.5
+
+Every model above this section is a **disproportionality** statistic — a
+ratio of two period counts, shrunk or not. `docs/LITERATURE_REVIEW.md` sec
+1.5 surveys a parallel pharmacovigilance/syndromic-surveillance literature
+that instead fits the *shape* of the quarterly curve and flags an excessive
+derivative — CDC's EARS aberration detectors, the EudraVigilance
+report-increase algorithm, MaxSPRT read as a slope test. Two candidates cheap
+enough to prototype without new infrastructure, both implemented in
+`emerging/analysis/aberration.py` and swept over the identical
+recent/baseline window every EB05 variant uses, so this is a fair swap of
+statistic, not also a change of window:
+
+- **`ears`** — EARS C2's own mechanism: the recent window's share of all OD
+  deaths, read as a z-score against the sample mean and SD of that share over
+  the baseline window. A classical, pre-empirical-Bayes technique.
+- **`nb-trend`** — a log-linear Poisson trend fit to the window, scored by
+  the fitted slope's Wald z (quasi-likelihood dispersion corrected). The
+  literal "model the curve, alarm on the derivative" detector.
+- **`nb-trend-own`/`nb-trend-dual`** — `nb-trend`'s own Gate-B analogue (the
+  same slope fit with no county-total offset, so it reads a trend in the
+  *raw count*) and the `min()` of the two, mirroring `eb05`/`eb05_own`/
+  `eb05_dual` exactly. Added after checking `nb-trend` alone against its own
+  off-target list — see below.
+
+### `ears` is the cleanest model in the entire table by off-target load, at a real recall cost
+
+**Zero off-target substances at the fixed line — the only model in this
+entire file to post that at any reading, matched budget included** (5
+substances there, still among the lowest). It avoids every one of the 7
+labelled negatives outright, ties `nb-trend`/`nb-trend-dual` for the
+highest fixed-line precision rate (0.79) of any single (non-ensemble) EB05-
+family or TreeScan variant, and it does this with no gamma-Poisson shrinkage
+at all — a 1954-vintage moving-average z-score run on the same window EB05
+sees. That is itself informative: shrinkage is not what is buying EB05's own
+precision, since `ears` gets similar or better precision from window
+discipline and a classical z-test alone.
+
+The cost is real and shows up exactly where the fixed/matched gap is
+designed to expose it: fixed-line `detected` (11/22) and mean recall (0.23)
+are the lowest of any non-TreeScan-leaf model in the table. `sd_b`'s sample
+estimate over only `baseline_quarters` (8) points is noisy for a substance
+whose baseline is thin and lumpy — an inherent cost of not pooling
+information across substances the way the Gamma prior does, which is
+precisely the problem GPS shrinkage was built to fix. At the matched budget
+`ears` closes most of the gap (14/22, mean recall 0.39, within 0.04 of plain
+`eb05`) while still running the second-cleanest off-target load (5
+substances) after `nb-trend`/`nb-trend-dual` (4) — a genuinely different
+point on the frontier from anything above it: buy `eb05`-comparable recall
+at a matched budget, for a lower off-target load, using a method with no
+Bayesian machinery in it at all.
+
+### `nb-trend` posts the best mean recall and mean IoU of any single detector in the whole table
+
+**At the fixed line, `nb-trend`'s mean recall (0.49) and mean IoU (0.37) are
+each the highest of any non-`ratio` model here** — ahead of every EB05
+variant, every TreeScan reading, and every ensemble except the two
+rank-based ones already flagged as threshold-scale artifacts. Checked
+substance by substance (`per_substance.csv`): `nb-trend` matches or beats
+plain `eb05`'s recall on every one of the 15 detected positives, most
+sharply on the ones EB05's shrinkage discounts hardest for being thin —
+Xylazine (0.43 vs `eb05`'s 0.14), PCP (0.48 vs 0.17), Ketamine (0.50 vs
+0.14), Clonazepam (0.38 vs 0.23), Codeine (0.44 vs 0.22) — and on Fentanyl
+specifically, recall 0.97 / IoU 0.90 against `eb05`'s 0.69 / 0.69, essentially
+the whole reference interval. The mechanism is not shrinkage doing something
+cleverer; it is what a Wald test naturally does that a fixed EB05>1.5 line
+does not — a substance with enough accumulated evidence keeps testing
+significant for as long as its trend holds, rather than needing a fresh
+period-over-period ratio to clear a fixed bar every quarter, which is a
+better match to `recall`'s own construct (overlap with a *presence*
+interval, not just the initial rise — see `ground_truth.md`'s construct-
+mismatch note, also flagged in this file's own caveats section below).
+
+**That same mechanism is what costs it on off-target load — 11 substances,
+45 alarm-quarters at the fixed line, the second-worst in the table after
+`treescan-branch`'s unguarded form.** Checked directly: Methamphetamine alone
+accounts for 26 of those 45 alarm-quarters. This is *not* the denominator-
+drift artifact `eb05_own`/Gate B was built to catch — Methamphetamine's own
+raw count really was climbing for most of the sweep's history (176 in
+2014Q4 to 1,802 by 2023Q1, a genuine, well-documented decade-long rise), and
+`nb-trend-own` (the no-denominator, own-count-only reading) confirms it,
+scoring *more* confidently than the share-based reading at every one of
+those quarters (z up to 8.2, against `nb-trend`'s own z up to 4.7 there).
+**This is the same category of finding `trends.py`'s `EMERGENT_THRESHOLD`
+exists to name for EB05 (Fentanyl, PCP: real, credible growth in an already-
+large, already-known killer, not a novel emergence)** — `nb-trend` has no
+equivalent concept, and a slope test has no natural way to distinguish "this
+just started happening" from "this has been climbing for a decade and is
+already the county's largest cause of overdose death," so it flags both
+identically. The 22-substance reference is a list of *emergences*
+specifically, so Methamphetamine (and, on 4 alarm-quarters, Amphetamine —
+already separately flagged as investigated-but-unlabelled in
+`ground_truth.md`) reads as reviewer load here, but would not obviously read
+as a modeling error to a deployment asking the plainer question "what is
+still rising."
+
+**Read against *live* deployment rather than the full historical sweep, most
+of that load evaporates.** `nb-trend`'s score for Methamphetamine at every
+2024–2025 as-of quarter is comfortably below the 1.96 line (0.55–1.34,
+against a 2014–2023 peak of 4.7), and `nb-trend-own` has been strongly
+*negative* since 2025Q1 (-3.5 to -7.4) as the county's meth deaths have
+themselves been declining (1,586 → 1,345 recent-window count, 2024Q3 →
+2025Q4). The 45 off-target alarm-quarters are a backtest-wide total across
+45 replayed as-of dates, most of them from the real, already-over meth
+epidemic's actual rise; the number a live monthly run would actually surface
+today is close to zero. This is a caveat about how to read
+`off_target_quarters` for a *slope* detector specifically — it is even less
+of a live false-positive count than the same column already is for the
+disproportionality family (see "What this benchmark cannot tell you"),
+because a sustained real trend keeps testing significant for its whole
+duration, not just its onset.
+
+### The dual gate helps, but not for the reason it helps EB05
+
+`nb-trend-dual` (`min(nb-trend, nb-trend-own)`) was built expecting to
+reproduce Gate A/Gate B's win against denominator drift. Checked directly:
+**it does not remove Methamphetamine from the off-target list at all** —
+still 26 alarm-quarters, because both the share trend and the own-count
+trend really were significantly positive through most of the meth
+epidemic's actual rise, so the `min()` has nothing to suppress there. What it
+*does* remove is thinner, noisier corroboration: total off-target
+alarm-quarters fall 45 → 42 and off-target substances 11 → 9 (Oxycodone and
+one of Hydroxyzine's two quarters drop out), mean recall gives back a little
+(0.49 → 0.45) and mean IoU barely moves (0.37 → 0.35) — a small, real
+precision-for-recall trade, not the clean win the EB05 dual gate posted.
+**`nb-trend-own` alone is a poor detector** — matched-budget `detected` falls
+to 4/22 (the worst of anything in the whole table) because a raw-count trend
+with no share normalization is dominated by exactly the large, already-
+established substances (Methamphetamine, Fentanyl) the dual gate exists to
+downweight, and has almost nothing to say about a substance too thin to
+move its own count trend on its own. It is included only as the component
+that makes the dual gate legible, the same role `eb05-own-role` plays for
+the EB05 family.
+
+### Ensembling `nb-trend`/`ears` with the EB05/TreeScan family
+
+Six designs, all following the same veto/threshold machinery validated on
+`eb05-dual` + TreeScan above, none of them nesting one ensemble inside
+another (`build_sweeps` does not resolve nested ensemble dependencies, so
+every component here is a base detector). **One caught a real bug before it
+caught anything about the data**: `combine="veto"` reads the *proposer's*
+own score unchanged (`build_ensemble_sweep`'s docstring), so a veto
+ensemble's fixed reading line must equal the proposer's own native line —
+`ensemble-veto-nbtrend-ears-*` first shipped without that override and
+silently read `nb-trend` (native line 1.96, a Wald z) at EB05's 1.5 instead,
+which is a looser bar on that scale and inflated the fixed-line numbers
+(recall 0.69, the highest in the whole table, off-target 40 substances, the
+second-worst). Caught by the same discipline this file already applies
+throughout — checking a surprising number rather than reporting it — fixed,
+and now covered by a regression test
+(`test_veto_ensemble_fixed_threshold_matches_its_proposers_own_line`,
+`tests/test_benchmark.py`). The numbers below are post-fix.
+
+**`ensemble-threshold-nbtrend` (`eb05-dual` OR `nb-trend`, each at its own
+line) is the one design that improves on `nb-trend` alone, not just matches
+it.** At the matched budget it Pareto-dominates plain `nb-trend`: identical
+`detected` (11/22) and precision rate (0.92), but higher mean recall (0.31
+vs 0.25), higher mean IoU (0.29 vs 0.23), and half the off-target substances
+(2 vs 4). The mechanism is the same one that made `eb05-dual OR treescan`
+work: a union can only add alarms, never dilute, so spending part of the
+shared 85-alarm budget on `eb05-dual`'s own surgical picks instead of
+`nb-trend`'s noisier ones buys precision for free. At the fixed line it
+posts the best mean recall of any non-veto-corrupted single or ensemble
+model in the table (0.52) at a real off-target cost (12 substances) — a
+predictable result given `nb-trend` alone already dominates `eb05-dual` on
+recall for every one of the 14 positives both detect (see above), so the
+union's fixed-line behaviour is close to `nb-trend` alone with a little
+extra noise, not two complementary coverages meeting.
+
+**`nb-trend` and TreeScan are interchangeable as `eb05-dual`'s vetoer, which
+is itself a finding.** `ensemble-veto-eb05dual-nbtrend-1` (floor z > 1) posts
+matched-budget numbers (15/22, recall 0.44, IoU 0.32, 2 off-target
+substances) that are statistically indistinguishable from `ensemble-veto-2`'s
+(treescan vetoer: 15/22, 0.44, 0.32, 2 off-target substances) — two
+structurally unrelated independent-corroboration signals (a multiplicity-
+corrected tree scan vs. a Poisson trend slope's Wald test) agreeing on which
+of `eb05-dual`'s own alarms deserve to survive is convergent evidence that
+the veto mechanism itself is sound, not an artifact of TreeScan
+specifically. The looser floor (`-0`, z > 0) is a near no-op in both
+readings — identical to `eb05-dual` alone at the fixed line, meaning nothing
+`eb05-dual` alarms on ever has a *negative* `nb-trend` slope, which is itself
+informative about how rarely the two disagree in direction even when they
+disagree on significance.
+
+**`ears` does not clean up `nb-trend`'s Methamphetamine problem, at either
+floor, and checking why is the important result here.** Floor z > 0 is a
+total no-op (identical numbers to `nb-trend` alone at both readings — every
+one of `nb-trend`'s alarms already has `ears_z >= 0`). Floor z > 1 removes
+some real noise (off-target substances 11 → 8, Oxycodone/Chlordiazepoxide/
+Quetiapine drop out) at a real recall/IoU cost (0.49 → 0.45, 0.37 → 0.34),
+but **Methamphetamine keeps 22 of its 26 off-target alarm-quarters even at
+the tighter floor** — checked directly (`ears_z >= 1` alongside
+`nb_trend_z > 1.96`). This is not a weak-floor problem the way the `z > 0`
+no-op is; `ears` and `nb-trend` are both share-based statistics, so a
+substance whose *share* was genuinely, sustainedly elevated for a decade
+(which Methamphetamine's was — see above) clears both bars by construction.
+**No combination of these detectors resolves this, because it is not a
+detection error to resolve.** Methamphetamine's decade-long rise is real by
+every measure in this file; what none of `ears`/`nb-trend`/their ensembles
+have is `trends.EMERGENT_THRESHOLD`'s distinction between "genuinely new"
+and "already the county's largest cause of overdose death, still climbing."
+Fixing this would mean building an EMERGENT_THRESHOLD equivalent for the
+curve family (e.g. gating on the fitted intercept, or on `n_baseline`, the
+same input EB05's own version already uses) rather than layering another
+vetoer — a different, targeted piece of work, not an ensembling question.
+
+**`nb-trend` as a second vetoer stacked on `eb05-v2-role` does not beat
+TreeScan there.** `ensemble-veto-v2role-nbtrend-1` posts matched numbers
+(12/22, recall 0.37, IoU 0.31, 1 fewer off-target substance than
+`eb05-v2-role` alone) that are a small, real improvement on the unvetoed
+baseline, but clearly behind `ensemble-veto-v2role-10` (treescan vetoer:
+13/22, recall 0.39, IoU 0.32, only 1 off-target substance). `eb05-v2-role`'s
+alarms are already precision-filtered by `--role-discount` and the spatial
+term, and TreeScan's multiplicity correction is evidently better matched to
+what's left to filter there than a trend slope is.
+
+**Verdict.** Consistent with `docs/LITERATURE_REVIEW.md` sec 1.5's own
+reading of the literature — nobody proposes replacing disproportionality
+with a curve/derivative test — none of these six ensembles is proposed as a
+new default. Two are worth keeping in the model table going forward:
+`ensemble-threshold-nbtrend` as a genuine, if modest, Pareto improvement on
+`nb-trend` alone at a matched budget, and `ensemble-veto-eb05dual-nbtrend-1`
+as confirmation that `eb05-dual`'s veto mechanism generalizes to a second,
+independent corroborating signal — worth having in reserve if TreeScan's own
+scan ever needs to be swapped out or is unavailable, since the two currently
+perform equivalently as `eb05-dual`'s vetoer. The Methamphetamine finding is
+the one result here that changes the project's model of the problem rather
+than just its scoreboard: it is evidence that the curve family's actual gap
+against EB05 is not off-target noise fixable by ensembling, but a missing
+concept (established-vs-emerging) that both a future curve-family threshold
+and, in the meantime, this repository's own EMERGENT_THRESHOLD framing on
+the EB05 side already exist to name.
+
+## Closing the curve family's gap: an EMERGENT_THRESHOLD analogue, and porting #1/#3
+
+The Methamphetamine finding above identified a real, named gap: `nb-trend`
+(and `ears`) have no notion of "already-established," so a decade-long real
+rise in the county's largest cause of overdose death scores identically to a
+substance appearing from nothing. `trends.EMERGENT_THRESHOLD` names the
+identical distinction for EB05 — but only ever as an *annotation*
+(`alarm_history`'s `emergent` column), never a filter that suppresses an
+alarm. Building the `nb-trend` analogue as an actual gate, rather than just
+another annotation, tests directly whether that restraint was arbitrary or
+load-bearing.
+
+### `nb_trend_emergent` (`emerging.analysis.aberration._emergent_flags`)
+
+Ported faithfully, including the one subtlety that matters:
+**anchored at the current alarm episode's onset, not read fresh every
+quarter** — the identical fix `alarm_history` needed, and for the identical
+reason. A substance whose own rise is real and sustained would otherwise
+grow its rolling baseline as the earlier part of its own rise ages into the
+baseline window, and flip from emergent to not partway through the very
+episode the flag exists to describe. Reading the baseline once, at first
+alarm, and holding it for the episode's duration avoids that.
+
+**It fully closes the Methamphetamine case, on the metric that matters
+most.** Gated at `EMERGENT_THRESHOLD = 2.0` (reused directly from
+`trends.py`, since `n_baseline` is the identical quantity computed the
+identical way), Methamphetamine and Cocaine both drop to **zero**
+alarm-quarters — checked directly, not inferred from the aggregate off-target
+count. Off-target substances at the fixed line fall 11 → 7 (Amphetamine,
+1,1-Difluoroethane, Hydroxyzine, Chlordiazepoxide, Gabapentin, Quetiapine,
+Temazepam remain — all thin, none the sustained-epidemic shape Methamphetamine
+was).
+
+**The cost is real, and it is the same cost EB05 was avoiding by keeping
+`EMERGENT_THRESHOLD` an annotation, not a gate.** Checked directly
+(`per_substance.csv`): four labelled positives drop out entirely —
+**Fentanyl, PCP, Acetyl fentanyl, Codeine.** Fentanyl and PCP are the exact
+two substances `trends.py`'s own `EMERGENT_THRESHOLD` calibration note names
+as "real, credible growth in an already-large, already-known killer" — this
+project's reference set still counts their documented rises as labelled
+emergences, so a hard gate throws those detections away along with
+Methamphetamine's false one. `detected` falls 14/22 → 10/22 and mean recall
+0.49 → 0.31 at the fixed line. **This is the finding that explains
+`alarm_history`'s design choice rather than just replicating it**: annotating
+"was this previously rare" is safe and adds real interpretive value
+(Methamphetamine reads differently from Xylazine to a reviewer even while
+both stay flagged), but gating on it is a real, asymmetric trade that throws
+out true positives this project's own reference set still wants to see.
+**Recommendation: expose `emergent` as the annotation `nb_trend_sweep`
+already returns, read alongside `nb_trend_z` the way `alarm_history` reads it
+alongside `eb05` — not as `nb_trend_emergent`'s hard-gated statistic**, which
+is kept in the model table as the check that proved this rather than as a
+candidate for adoption. **Built**: `emerging aberration rank` — the model-
+the-curve family's own current-quarter report, `nb_trend`/`ears` alongside
+`emergent`, mirroring `trends rank` without duplicating its EB05 machinery.
+`--weighted`/`--role-discount` are off by default here (unlike `trends
+rank`), since the effect is real but mixed for this family rather than a
+clean win -- see the next section.
+
+### Porting `GPS_V2_DESIGN.md` #1 (position-weighted case definition) and #3 (spatial)
+
+**#1 ports mechanically and cleanly** — position-weighting is a change to
+what counts as a death, upstream of whichever statistic runs on top of the
+resulting counts, so `ears_sweep`/`nb_trend_sweep` now take the identical
+`weighted`/`role_discount` flags `sweep_eb05` does and recompute
+`trends.load_quarterly` fresh per as-of quarter, the identical
+cross-case-aggregate discipline `sweep_eb05` already needs for the same
+reason (`_ever_independent`/`_role_dispersion` must never leak later
+evidence into an earlier as-of's score). Results are a real but *mixed* win,
+not the clean precision gain #1 gave EB05:
+
+- **`ears-weighted-role`** barely moves — recall/IoU both drift down by
+  ~0.01-0.05 at both readings, off-target stays clean at the fixed line (0
+  substances, same as unweighted) but gets *worse* at the matched budget (7
+  vs 5). `ears` was already the cleanest detector in the table with nothing
+  for position-weighting to fix.
+- **`nb-trend-weighted-role`** posts the **best mean IoU of any model in the
+  entire table (0.39)**, edging out plain `nb-trend`'s own 0.37 — a real
+  gain. But fixed-line off-target substances rise 11 → **16**, not fall, the
+  opposite direction from `eb05-weighted-role`'s signature win. Checked
+  directly: none of plain `nb-trend`'s 11 off-target substances are removed
+  by weighting (Methamphetamine and Cocaine both remain); five *new* ones
+  appear (Ethanol, Hydrocodone, MDMA, Olanzapine, Venlafaxine). This makes
+  sense once named rather than assumed: `--role-discount` was built and
+  validated against EB05's specific failure mode (a trailing adulterant
+  inflating a period-over-period *ratio*, e.g. Lidocaine), a different
+  mechanism from what puts Methamphetamine on `nb-trend`'s list
+  (denominator drift / already-established, nothing to do with cause-line
+  position). Reweighting a count series changes its quarter-to-quarter
+  *shape*, which a ratio-based statistic barely notices but a slope fit can
+  react to directly — for a handful of substances that reshaping apparently
+  creates a new spurious trend rather than removing an old one.
+- **`nb-trend-dual-weighted-role`** is the best-behaved of the three:
+  matched-budget `detected` rises to **13/22**, the best any nb-trend dual
+  variant has posted (up from 11/22 unweighted), with mean IoU up
+  (0.23 → 0.25) and off-target substances essentially unchanged (3 vs 4).
+  Combining the two axes that each individually help (`#1` for IoU, `#2` for
+  precision) does compound here, just less cleanly than it does for EB05.
+
+**#3 was checked and found not to port at all, algebraically, before
+anything was built.** EB05's spatial discount shrinks the single collapsed
+`expected` a ratio is read against; `nb_trend`'s statistic is a fitted slope,
+and discounting the trend's offset by the same constant factor in every
+quarter of the window — the only way to reuse `concentration_weight`'s
+existing per-(substance, as_of) score as-is — folds entirely into the
+fitted intercept and leaves the slope, and therefore the Wald z this
+detector alarms on, *provably unchanged* (`log(offset*c) = log(offset) +
+log(c)`, and only the intercept absorbs an additive constant). See
+`emerging/analysis/aberration.py`'s module docstring for the full argument.
+A version that discounted only the recent-window quarters differently from
+the baseline window's would have real effect, but that is a new mechanism to
+design, not a port of #3 as it exists — not built here.
+
 ## What the table says
 
 **1. Shrinkage is still unambiguously worth its complexity.** The raw `n/E`
@@ -808,3 +1182,36 @@ investigation.
 recommendation** — see the dedicated section above; Pareto-dominant at both
 readings, kept as a new model id rather than a silent redefinition so
 `GPS_V2_DESIGN.md`'s own `eb05-v2` checkpoint stays reproducible as written.
+
+**The model-the-curve family (`docs/LITERATURE_REVIEW.md` sec 1.5) adds two
+new points to the frontier, not a replacement for anything on it.** `ears`
+is the cleanest single detector in the entire table on off-target load (0
+substances at the fixed line, at a real recall cost); `nb-trend` posts the
+best mean recall (0.49) and mean IoU (0.37) of any single detector here,
+built from nothing more than a Poisson trend slope and a Wald test — no
+gamma-Poisson shrinkage, no TreeScan multiplicity correction. Both come from
+a statistically unrelated literature to everything else in this file, which
+is exactly what makes them worth carrying into the same veto/ensemble
+machinery validated on `eb05-dual` + TreeScan above rather than scoring them
+as a fourth family competing for the same slot. **That ensembling is now
+done, not just proposed**: `ensemble-threshold-nbtrend` (`eb05-dual` OR
+`nb-trend`) Pareto-dominates plain `nb-trend` at the matched budget, and
+`nb-trend` swapped in for TreeScan as `eb05-dual`'s vetoer
+(`ensemble-veto-eb05dual-nbtrend-1`) lands statistically indistinguishable
+from the TreeScan-vetoed version — two unrelated independent-corroboration
+signals agreeing is itself evidence the veto mechanism is sound, not a
+TreeScan-specific trick. **Methamphetamine's off-target alarm survived every
+ensemble tried, but not the fix that actually targets it**: none of the
+ensembles above are what closes it, because it was never an ensembling
+problem — `nb_trend_emergent` (the `EMERGENT_THRESHOLD` analogue,
+"Closing the curve family's gap" below) reduces Methamphetamine and Cocaine
+to zero alarm-quarters directly, at the cost of also gating out Fentanyl,
+PCP, Acetyl fentanyl and Codeine — the same trade `trends.alarm_history`
+avoids by keeping `emergent` an annotation rather than a filter, now
+demonstrated rather than assumed. `#1` (position-weighting) also ports, with
+mixed results (`nb-trend-weighted-role` posts the best mean IoU in the whole
+table); `#3` (spatial) does not port at all, and the reason is algebraic, not
+empirical — see that section and `emerging/analysis/aberration.py`'s
+docstring. See the dedicated sections above for the full results, including
+the `fixed_threshold` bug the veto ensembles caught and the regression test
+that now guards it.

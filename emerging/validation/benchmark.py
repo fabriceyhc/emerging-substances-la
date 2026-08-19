@@ -60,6 +60,10 @@ import numpy as np
 import pandas as pd
 import typer
 
+from emerging.analysis.aberration import EARS_THRESHOLD, NB_TREND_THRESHOLD
+from emerging.analysis.aberration import ears_sweep as aberration_ears_sweep
+from emerging.analysis.aberration import \
+    nb_trend_sweep as aberration_nb_trend_sweep
 from emerging.analysis.trends import (ALARM_THRESHOLD, SPATIAL_WEIGHT,
                                       _episodes, _spatial_sweep,
                                       load_quarterly, sweep_eb05)
@@ -85,6 +89,19 @@ RESULTS_DIR = results_dir("benchmark")
 # family's `(weighted, role_discount, spatial)`.
 TREESCAN_STATISTICS = frozenset(
     {"treescan", "treescan_branch", "treescan_tree"})
+# The "model the curve, not the ratio" family (docs/LITERATURE_REVIEW.md sec
+# 1.5): a moving-baseline z-score (EARS C2) and a log-linear trend slope's
+# Wald z (the direct disproportionality-free analogue of "large derivative").
+# Both take the same `(weighted, role_discount)` axis GPS_V2_DESIGN.md #1
+# gives the EB05 family (`Model.weighted`/`.role_discount`, reused rather than
+# duplicated) -- `aberration.ears_sweep`/`nb_trend_sweep` accept the identical
+# flags and recompute `load_quarterly` per as-of the same way `sweep_eb05`
+# does. `nb_trend`/`nb_trend_own`/`nb_trend_dual`/`nb_trend_emergent` are four
+# readings of one sweep (`aberration.nb_trend_sweep` fits both trends and the
+# `emergent` flag together, same reason `eb05`/`eb05_dual` share `sweep_eb05`),
+# so they collapse to the same key -- see `Model.sweep_key`.
+NB_TREND_SWEEP_STATISTICS = frozenset(
+    {"nb_trend", "nb_trend_own", "nb_trend_dual", "nb_trend_emergent"})
 # The attribution line the branch models are guarded at, and the band
 # `treescan.backtest` already calls "partly attributable" -- below it, a
 # branch is signalling on something other than the substance being credited.
@@ -137,6 +154,32 @@ class Model:
       alone is the method: the leaf reading is the method with its
       aggregation removed, and the branch reading is the method with its
       most-specific hypotheses removed.
+    - `"ears"` — EARS C2-style moving-baseline z-score
+      (`emerging.analysis.aberration.ears_sweep`), on the same share-of-OD-
+      deaths metric as EB05 Gate A. Its native scale is a z-score, not a
+      posterior percentile, so it needs `fixed_threshold` the same way
+      `"treescan"` does. `weighted`/`role_discount` apply
+      `GPS_V2_DESIGN.md` #1 to the case definition underneath it, exactly as
+      they do for `eb05` -- see `aberration.ears_sweep`.
+    - `"nb_trend"` — log-linear Poisson trend slope, Wald z-scored
+      (`emerging.analysis.aberration.nb_trend_sweep`) -- "model the curve,
+      alarm on the derivative" read literally, rather than a shrunk ratio of
+      two periods. Also its own scale, also needs `fixed_threshold`.
+      `weighted`/`role_discount` apply the same way as for `"ears"`.
+    - `"nb_trend_own"` — the same slope fit with no county-total offset, so
+      it reads a trend in the substance's *raw count* rather than its share.
+      The `nb_trend` analogue of Gate B (`eb05_own`).
+    - `"nb_trend_dual"` — `min(nb_trend, nb_trend_own)`, the `nb_trend`
+      analogue of `eb05_dual` -- see `nb_trend_sweep`'s docstring for the
+      Methamphetamine/Cocaine denominator-drift case this exists to catch.
+    - `"nb_trend_emergent"` — `nb_trend_z` gated by `aberration._emergent_flags`
+      (`sweep["emergent"]`): floored to `-inf` wherever the substance's
+      current alarm episode was not previously rare, exactly the way
+      `credible_rise` is a conjunction rather than a blend. The `nb_trend`
+      analogue of `trends.alarm_history`'s `emergent` annotation, but wired
+      as a hard gate here rather than a label, since `EMERGENT_THRESHOLD` is
+      never used to *suppress* an EB05 alarm and this benchmark wants to ask
+      whether it should for `nb_trend` specifically (Methamphetamine).
     - `"ensemble"` — `components` (other model ids) combined per `combine`;
       see `build_ensemble_sweep` for the four modes (`"mean"`, `"max"`,
       `"threshold"`, `"veto"`) and what each one actually does to the
@@ -181,6 +224,10 @@ class Model:
         """Models differing only in how they *read* one sweep share it."""
         if self.statistic in TREESCAN_STATISTICS:
             return (self.statistic, self.min_excess_share)
+        if self.statistic in NB_TREND_SWEEP_STATISTICS:
+            return ("nb_trend", self.weighted, self.role_discount)
+        if self.statistic == "ears":
+            return ("ears", self.weighted, self.role_discount)
         if self.statistic == "ensemble":
             return ("ensemble", self.combine, self.veto_threshold) + self.components
         return (self.weighted, self.role_discount, self.spatial)
@@ -231,6 +278,47 @@ MODELS: list[Model] = [
           "hierarchy -- the aggregation the leaf-only row cannot show",
           "treescan_tree", fixed_threshold=TREESCAN_RI_THRESHOLD,
           min_excess_share=MIN_EXCESS_SHARE),
+    Model("ears", "EARS C2-style moving-baseline z-score on share of OD "
+          "deaths -- CDC syndromic-surveillance aberration detection, no "
+          "EB05/GPS underneath it at all (docs/LITERATURE_REVIEW.md sec 1.5)",
+          "ears", fixed_threshold=EARS_THRESHOLD),
+    Model("nb-trend", "log-linear Poisson trend, Wald z of the fitted slope "
+          "over the same window EB05 sees -- 'model the curve, alarm on the "
+          "derivative' read literally (docs/LITERATURE_REVIEW.md sec 1.5)",
+          "nb_trend", fixed_threshold=NB_TREND_THRESHOLD),
+    Model("nb-trend-own", "nb-trend's Gate B analogue: trend slope on the "
+          "substance's raw count, no county-total offset at all",
+          "nb_trend_own", fixed_threshold=NB_TREND_THRESHOLD),
+    Model("nb-trend-dual", "nb-trend's eb05-dual analogue: min(nb-trend, "
+          "nb-trend-own) -- built to catch the same share-vs-count "
+          "denominator drift Gate B catches for EB05 (Methamphetamine, "
+          "Cocaine on nb-trend's own off-target list, see "
+          "docs/findings/benchmark.md)",
+          "nb_trend_dual", fixed_threshold=NB_TREND_THRESHOLD),
+    Model("nb-trend-emergent", "nb-trend gated by the EMERGENT_THRESHOLD "
+          "analogue (aberration._emergent_flags): alarms only where the "
+          "substance's own alarm episode reads as previously rare, "
+          "mirroring trends.alarm_history's `emergent` column but wired as "
+          "a hard gate -- built to test whether it, not the dual gate, is "
+          "what actually resolves the Methamphetamine finding",
+          "nb_trend_emergent", fixed_threshold=NB_TREND_THRESHOLD),
+    Model("ears-weighted-role", "ears, position-weighted + role-discounted "
+          "case definition (GPS_V2_DESIGN.md #1, extended) -- does the same "
+          "case-definition fix that helps eb05-weighted-role transfer to a "
+          "detector with no shrinkage in it at all?",
+          "ears", weighted=True, role_discount=True,
+          fixed_threshold=EARS_THRESHOLD),
+    Model("nb-trend-weighted-role", "nb-trend, position-weighted + "
+          "role-discounted case definition (#1, extended)",
+          "nb_trend", weighted=True, role_discount=True,
+          fixed_threshold=NB_TREND_THRESHOLD),
+    Model("nb-trend-dual-weighted-role", "nb-trend-dual, position-weighted "
+          "+ role-discounted case definition (#1, extended) -- the "
+          "position-weighted analogue of eb05-v2-role's own #1-extended "
+          "layer, minus the spatial term (see aberration.py's docstring for "
+          "why #3 doesn't port the same way)",
+          "nb_trend_dual", weighted=True, role_discount=True,
+          fixed_threshold=NB_TREND_THRESHOLD),
     Model("ensemble-mean", "ensemble, soft AND: mean rank of "
           "eb05-dual + treescan -- kept as a negative comparison, see "
           "build_ensemble_sweep's docstring",
@@ -285,6 +373,49 @@ MODELS: list[Model] = [
           "with the leaf-only vetoer swapped for the whole hierarchy",
           "ensemble", combine="veto", veto_threshold=10.0,
           components=("eb05-v2-role", "treescan-tree")),
+    # -- nb-trend/ears ensembles, following the benchmark.md verdict that
+    # `docs/LITERATURE_REVIEW.md` sec 1.5's model-the-curve family is a
+    # genuinely independent axis worth the same veto/threshold-union
+    # machinery already validated on treescan, not a fourth family competing
+    # for the same slot. `nb-trend`'s own alarm line is a Wald z (1.96), so
+    # its veto floors are chosen on that scale rather than reused from
+    # treescan's RI floors -- 0.0 ("the slope is at least pointing the right
+    # way") is the loose analogue of RI 2, 1.0 ("within reach of its own
+    # significance line") the tighter analogue of RI 10.
+    Model("ensemble-threshold-nbtrend", "ensemble, soft OR by native "
+          "threshold: eb05-dual OR nb-trend, each at its own calibrated "
+          "line -- the union design that worked for treescan, tried on the "
+          "other independent axis",
+          "ensemble", fixed_threshold=1.0, combine="threshold",
+          components=("eb05-dual", "nb-trend")),
+    Model("ensemble-veto-eb05dual-nbtrend-0", "ensemble: eb05-dual proposes, "
+          "nb-trend vetoes below z 0 -- does an independently-significant "
+          "trend corroborate eb05-dual's alarms the way treescan's veto "
+          "does?",
+          "ensemble", combine="veto", veto_threshold=0.0,
+          components=("eb05-dual", "nb-trend")),
+    Model("ensemble-veto-eb05dual-nbtrend-1", "ensemble: eb05-dual proposes, "
+          "nb-trend vetoes below z 1 -- tighter floor than the 0-line above",
+          "ensemble", combine="veto", veto_threshold=1.0,
+          components=("eb05-dual", "nb-trend")),
+    Model("ensemble-veto-nbtrend-ears-0", "ensemble: nb-trend proposes, ears "
+          "vetoes below z 0 -- does the cleanest off-target detector in the "
+          "table clean up nb-trend's own off-target load (Methamphetamine "
+          "et al., see docs/findings/benchmark.md)?",
+          "ensemble", combine="veto", veto_threshold=0.0,
+          fixed_threshold=NB_TREND_THRESHOLD,
+          components=("nb-trend", "ears")),
+    Model("ensemble-veto-nbtrend-ears-1", "ensemble: nb-trend proposes, ears "
+          "vetoes below z 1 -- tighter floor than the 0-line above",
+          "ensemble", combine="veto", veto_threshold=1.0,
+          fixed_threshold=NB_TREND_THRESHOLD,
+          components=("nb-trend", "ears")),
+    Model("ensemble-veto-v2role-nbtrend-1", "ensemble: eb05-v2-role "
+          "proposes, nb-trend vetoes below z 1 -- directly comparable to "
+          "ensemble-veto-v2role-10 (same proposer, treescan swapped for "
+          "nb-trend as the vetoer)",
+          "ensemble", combine="veto", veto_threshold=1.0,
+          components=("eb05-v2-role", "nb-trend")),
 ]
 MODELS_BY_ID = {m.id: m for m in MODELS}
 
@@ -296,7 +427,9 @@ MODELS_BY_ID = {m.id: m for m in MODELS}
 # floored would let a component's sparsest quarters inflate the few
 # substances it does score.
 ENSEMBLE_FLOOR = {"ratio": 0.0, "eb05": 0.0, "eb05_dual": 0.0, "eb05_own": 0.0,
-                  "treescan": 1.0, "treescan_branch": 1.0, "treescan_tree": 1.0}
+                  "treescan": 1.0, "treescan_branch": 1.0, "treescan_tree": 1.0,
+                  "ears": 0.0, "nb_trend": 0.0, "nb_trend_own": 0.0,
+                  "nb_trend_dual": 0.0, "nb_trend_emergent": 0.0}
 
 
 def model_score(sweep: pd.DataFrame, model: Model) -> pd.Series:
@@ -321,6 +454,16 @@ def model_score(sweep: pd.DataFrame, model: Model) -> pd.Series:
         return sweep["eb05_own"]
     if model.statistic in TREESCAN_STATISTICS:
         return sweep["recurrence_interval"]
+    if model.statistic == "ears":
+        return sweep["ears_z"]
+    if model.statistic == "nb_trend":
+        return sweep["nb_trend_z"]
+    if model.statistic == "nb_trend_own":
+        return sweep["nb_trend_own_z"]
+    if model.statistic == "nb_trend_dual":
+        return sweep[["nb_trend_z", "nb_trend_own_z"]].min(axis=1)
+    if model.statistic == "nb_trend_emergent":
+        return sweep["nb_trend_z"].where(sweep["emergent"], -np.inf)
     if model.statistic == "ensemble":
         return sweep["ensemble_score"]
     raise ValueError(f"unknown statistic {model.statistic!r}")
@@ -607,6 +750,21 @@ def build_sweeps(
                     min_excess_share=min_share,
                     include_leaves=(stat == "treescan_tree"),
                     prepared=prepared)
+            continue
+        if key[0] in ("ears", "nb_trend"):
+            stat, weighted, role_discount = key
+            if not quiet:
+                detail = ("moving-baseline z-score" if stat == "ears" else
+                          "trend slope + own-count trend + emergent flag")
+                typer.echo(f"  sweep: {stat} (model-the-curve family, {detail}, "
+                           f"{recent_quarters}q recent / {baseline_quarters}q "
+                           f"baseline, same window as eb05, weighted="
+                           f"{weighted} role_discount={role_discount})")
+            fn = aberration_ears_sweep if stat == "ears" else aberration_nb_trend_sweep
+            out[key] = fn(counts, denom, recent_quarters=recent_quarters,
+                          baseline_quarters=baseline_quarters,
+                          weighted=weighted, role_discount=role_discount,
+                          mentions_path=mentions)
             continue
         weighted, role_discount, spatial = key
         if not quiet:

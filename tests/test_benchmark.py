@@ -179,6 +179,47 @@ def test_every_treescan_reading_is_its_own_sweep_and_shares_the_ri_line() -> Non
         assert bm.ENSEMBLE_FLOOR[m.statistic] == 1.0
 
 
+def test_nb_trend_variants_share_one_sweep_and_read_their_own_column() -> None:
+    """`nb-trend`/`nb-trend-own`/`nb-trend-dual` are three readings of one
+    sweep (`aberration.nb_trend_sweep` fits both trends together) -- they
+    must collapse to the same sweep key, `ears` must not join them (it is a
+    different sweep function entirely), and `nb-trend-dual` must equal the
+    elementwise min of the other two, the same pattern as `eb05_dual`."""
+    q = pd.date_range("2024-01-01", periods=2, freq="QS")
+    sw = pd.DataFrame({
+        "substance": ["a", "a"], "as_of": q,
+        "nb_trend_z": [3.0, -1.0], "nb_trend_own_z": [1.0, -2.0],
+    })
+    nb, nb_own, nb_dual, ears = (bm.MODELS_BY_ID[i] for i in
+                                 ("nb-trend", "nb-trend-own", "nb-trend-dual", "ears"))
+    assert nb.sweep_key == nb_own.sweep_key == nb_dual.sweep_key
+    assert nb.sweep_key != ears.sweep_key
+    assert list(bm.model_score(sw, nb)) == [3.0, -1.0]
+    assert list(bm.model_score(sw, nb_own)) == [1.0, -2.0]
+    assert list(bm.model_score(sw, nb_dual)) == [1.0, -2.0]
+
+
+def test_veto_ensemble_fixed_threshold_matches_its_proposers_own_line() -> None:
+    """`combine='veto'` never touches the proposer's own scale (see
+    `build_ensemble_sweep`'s docstring), so the *ensemble's* fixed-reading
+    line must equal the proposer's own native line -- if it silently fell
+    back to the shared `ALARM_THRESHOLD` instead, a proposer scored on a
+    different scale (nb-trend's Wald z, not EB05's posterior percentile)
+    would be read at the wrong bar. Caught for real:
+    `ensemble-veto-nbtrend-ears-*` first shipped without this override and
+    read nb-trend at EB05's 1.5 line instead of its own 1.96, inflating
+    recall/IoU and off-target load in the fixed-line reading."""
+    for m in bm.MODELS:
+        if m.statistic != "ensemble" or m.combine != "veto":
+            continue
+        proposer = bm.MODELS_BY_ID[m.components[0]]
+        proposer_line = (proposer.fixed_threshold
+                         if proposer.fixed_threshold is not None else ALARM_THRESHOLD)
+        ensemble_line = (m.fixed_threshold
+                         if m.fixed_threshold is not None else ALARM_THRESHOLD)
+        assert ensemble_line == pytest.approx(proposer_line), m.id
+
+
 def _eb_like_sweep(rows) -> pd.DataFrame:
     """A minimal eb05_dual-shaped sweep: substance, as_of, eb05, eb05_own."""
     return pd.DataFrame(rows, columns=["substance", "as_of", "eb05", "eb05_own"])

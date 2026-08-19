@@ -106,7 +106,143 @@ simultaneously is awkward, and TreeScan's recurrence interval buys the same
 protection in a form that fits the problem. Revisit only if we commit to
 prospective monitoring of a short fixed watchlist.
 
-### 1.5 A gap we under-weighted: right-truncation
+### 1.5 A different family entirely: model the curve, not the ratio
+
+Every detector reviewed above -- GPS/EBGM, BCPNN, TreeScan, MaxSPRT -- is a
+**disproportionality** method at heart: compare a count (or a ratio of
+counts) between two periods, shrink or correct it, and threshold the result.
+None of them look at the *shape* of the quarterly series itself. The question
+that prompted this addition: is there a parallel literature that instead fits
+the curve of a substance's counts over time and flags an excessive
+**derivative** -- the same move as reading EB05 against 1.5, but on a slope
+instead of a share ratio? Yes, and it is real enough to have deployed
+examples, though it is treated in the literature as *complementary* to
+disproportionality, never a replacement:
+
+- **CDC's Early Aberration Reporting System (EARS), C1/C2/C3.** Built for
+  syndromic surveillance, not pharmacovigilance, but the mechanism is exactly
+  the "gradient exceeds a threshold" idea: a moving-window baseline mean and
+  standard deviation, and an alarm when the current observation is more than
+  *k* baseline SDs above it (C1/C2 alarm at 3 SD, the more sensitive C3 at 2
+  SD on a CUSUM-like three-point sum). [Comparison of statistical algorithms
+  for daily syndromic surveillance aberration
+  detection](https://academic.oup.com/bioinformatics/article/35/17/3110/5301313);
+  [`earsC` in the R `surveillance`
+  package](https://surveillance.r-forge.r-project.org/pkgdown/reference/earsC.html).
+  Nearest pharmacovigilance-adjacent use: CDC/state health department overdose
+  surveillance dashboards run EARS-family algorithms on weekly ED visit
+  counts, the same denominator problem this project has for deaths.
+- **The EudraVigilance report-increase algorithm** (van Holle & Bauchau).
+  Forecasts each substance/event's expected monthly report count with a
+  negative-binomial time-series regression fit on the preceding ~6 periods
+  (trend + seasonal terms), then flags a report count that departs sharply
+  from the forecast -- a residual-based alarm, not a period-over-period ratio.
+  [An algorithm to detect unexpected increases in frequency of reports of
+  adverse events in
+  EudraVigilance](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5765515/). This
+  is a real, currently-deployed EU regulatory system, which makes it the
+  strongest available precedent for "model the curve" over "compare two
+  periods."
+- **Whalen, Hauben & Bate, "Time Series Disturbance Detection for
+  Hypothesis-Free Signal Detection in Longitudinal Observational Databases"**
+  (Drug Safety, 2018). Curve-fits the reporting series in longitudinal
+  healthcare databases and flags *disturbances* -- the most literal
+  "hypothesis-free, model the shape" analogue in the pharmacovigilance
+  literature proper, from the same UMC group (Norén, Bate) behind BCPNN.
+  Companion: [Norén et al., "Temporal pattern discovery in longitudinal
+  electronic patient
+  records"](https://link.springer.com/article/10.1007/s10618-009-0152-3)
+  (Data Mining and Knowledge Discovery, 2010).
+- **MaxSPRT** (already reviewed in §1.4, rejected there for a different
+  reason -- awkward at 205 simultaneously-scanned substances) is worth
+  re-reading with this framing: it continuously monitors the *cumulative*
+  count curve and alarms when its slope crosses a boundary tuned to a target
+  false-alarm rate. It is the most operationally mature "watch the curve,
+  alarm on steepness" method actually running at scale (CDC/FDA Sentinel,
+  VAERS/VSD vaccine safety surveillance). [A Maximized Sequential Probability
+  Ratio Test for Drug and Vaccine Safety
+  Surveillance](https://www.tandfonline.com/doi/full/10.1080/07474946.2011.539924).
+
+**Reading across all of them: nobody proposes replacing disproportionality
+with a curve/derivative test.** Norén's group explicitly builds combined
+scores; EudraVigilance runs its report-increase algorithm *alongside*
+PRR/EBGM screening, not instead of it. The two families catch different
+failure shapes -- disproportionality catches something rare-but-frequent
+relative to background even without a recent inflection, a slope-based
+detector catches something accelerating before it clears a disproportionality
+bar -- which is precisely this project's own finding for
+`eb05-dual`/TreeScan (`docs/findings/benchmark.md`'s veto ensemble): two
+structurally different detectors combine better than either tuned harder
+alone.
+
+**What this means for us, concretely.** EB05 already reads as "a ratio,
+shrunk"; nothing here is proposed as a replacement for it. Two candidates are
+cheap enough to prototype directly against the existing 22-substance
+benchmark without new infrastructure or non-Python dependencies:
+
+1. An EARS-style z-score against a moving baseline SD, computed on the same
+   share-of-OD-deaths metric EB05's Gate A already uses, so the two are a
+   fair swap of "empirical-Bayes shrinkage" for "z-score against a sample
+   SD," not also a change of what's being measured.
+2. A log-linear (quasi-)Poisson trend fit to the same recent+baseline window
+   EB05 sees, scored by the fitted slope's Wald z-score -- the most literal
+   version of "model the curve, alarm on the derivative," and the one with
+   the EudraVigilance precedent behind it.
+
+Both are implemented in `emerging/analysis/aberration.py` and scored
+side by side with the whole EB05/TreeScan family in
+`docs/findings/benchmark.md`.
+
+**Update, same review pass — the benchmark is in, and the prediction above
+held.** Neither displaces EB05: `ears` is the cleanest single detector in
+the whole 28-model comparison on off-target load (zero unlabelled
+substances alarmed at the fixed line), and `nb-trend` (the literal
+derivative-threshold detector this section was written to check for) posts
+the best mean recall and mean IoU of any single detector in the table — a
+plain Poisson trend slope and a Wald test, no gamma-Poisson shrinkage at
+all. It also reproduces a known EB05 failure mode for an unrelated reason:
+Methamphetamine trips its off-target list not from denominator drift but
+from a real, decade-long historical rise with no equivalent of
+`trends.EMERGENT_THRESHOLD` to mark it "already-established, not emerging."
+Full results, the dual-gate follow-up, and the Methamphetamine finding are
+in `docs/findings/benchmark.md`'s dedicated section.
+
+**Second update — the ensembling is done too.** `eb05-dual` OR `nb-trend`
+(threshold union) Pareto-dominates plain `nb-trend` at a matched alarm
+budget; `nb-trend` swapped in for TreeScan as `eb05-dual`'s independent
+vetoer lands statistically indistinguishable from the TreeScan-vetoed
+version, which is itself evidence the veto mechanism generalizes rather than
+being a TreeScan-specific trick. Building the veto ensembles also caught a
+real bug (a fixed-line threshold silently defaulting to EB05's scale instead
+of `nb-trend`'s own, inflating its apparent recall) — fixed, and now covered
+by a regression test. Neither ensemble displaces `eb05-dual`'s existing
+TreeScan veto as the recommendation; see `docs/findings/benchmark.md` for
+why (the Methamphetamine finding survives every ensemble tried, because it
+isn't an ensembling problem — see the next update).
+
+**Third update — the EMERGENT_THRESHOLD analogue, and porting `#1`/`#3`.**
+Methamphetamine's alarm was never a detection error to begin with: it's a
+missing concept, not noise, and `nb_trend_emergent`
+(`emerging.analysis.aberration._emergent_flags`, ported faithfully from
+`trends.alarm_history`'s onset-anchoring rule) confirms that directly —
+gated on it, Methamphetamine and Cocaine both drop to zero alarm-quarters.
+The cost is the same one `alarm_history` was avoiding by keeping `emergent`
+an annotation rather than a filter: Fentanyl, PCP, Acetyl fentanyl and
+Codeine — real labelled emergences whose rises happened to start from an
+already-large base — get gated out too. `GPS_V2_DESIGN.md` #1
+(position-weighting) ports mechanically since it changes the case
+definition upstream of any statistic; results are real but mixed
+(`nb-trend-weighted-role` posts this benchmark's best mean IoU, 0.39, but
+*adds* off-target substances rather than removing them — a different
+mechanism than the one that makes `--role-discount` a clean win for EB05).
+`#3` (spatial) does not port at all: applying the same constant discount to
+every quarter of a fitted trend's offset folds entirely into the intercept
+and leaves the slope — the number this detector actually alarms on —
+provably unchanged, confirmed algebraically before deciding not to build
+it. Full results and the reasoning for each in
+`docs/findings/benchmark.md`'s dedicated section.
+
+### 1.6 A gap we under-weighted: right-truncation
 
 Our handling is the crudest available — a hard `CUTOFF` that discards every
 quarter whose toxicology is unsettled, which throws away the most
@@ -123,7 +259,7 @@ documents the CDC nowcast breaking down when the epidemic changed regime —
 which, per `regime`, ours demonstrably is (−18% denominator across the current
 windows).
 
-### 1.6 Domain context
+### 1.7 Domain context
 
 - [Global patterns of NPS in fatalities: systematic review and meta-analysis](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12822845/)
   — pooled NPS detection rose from 2.5% (2008–2014) to 9.3% (2015–2025). LA's
@@ -223,6 +359,7 @@ comparable column across 42 substances.
 | **3** | **Delay-distribution nowcast** | Replaces discarding 2026 with using it under uncertainty | ~2 days, in-house |
 | 4 | `sparr` surface for PCP only | n = 367 clears the threshold; turns a ratio into a map | R detour |
 | 5 | READUS-PV reporting conventions | Manuscript credibility | Writing only |
+| — | **Done** — ensembled `nb-trend`/`ears` with `eb05-dual`/TreeScan | Threshold-union and veto variants built and benchmarked; TreeScan veto kept as the default, `nb-trend` confirmed as an equivalent independent vetoer in reserve | `docs/findings/benchmark.md` |
 | — | **Keep** GPS/EBGM | Criticism targets DA *alone*; we triangulate | — |
 | — | **Skip** MaxSPRT, LGCP/inlabru | Redundant / prior-dominated at our n | — |
 
