@@ -56,6 +56,8 @@ emerging trends        alarms    # every plain-EB05 breach, ever  (run before pl
 emerging ground-truth  score     # alarm episodes vs known emergences
 emerging benchmark     run       # every detector variant, side by side
 emerging benchmark     plot
+emerging synthetic     plot      # known-ground-truth Monte Carlo profiles, visualized
+emerging synthetic     match     # nearest real substance to each synthetic profile
 emerging trends        watch     # national watchlist vs LA
 emerging trends        regime    # recording artifacts that move EB05
 emerging trends        plot      # five figures
@@ -166,6 +168,7 @@ calibrated, and which artifacts would have manufactured a false result.
 | [Space-time scan](docs/findings/spacetime.md) | where, and is it growing there |
 | [Spatial variation in trends](docs/findings/svtt.md) | where mortality is rising fastest; the Pomona Valley |
 | [Reporting delay](docs/findings/nowcast.md) | how complete the recent quarters are; the correction that is withheld |
+| [Synthetic benchmark](docs/findings/synthetic.md) | known-ground-truth Monte Carlo checks the real 22-substance set can't run; found a repeated-testing false-alarm inflation in nb-trend on the first run |
 | [Relative-risk surface](docs/findings/relrisk.md) | PCP; three bugs that each produced a plausible wrong map |
 | [Ground-truth overlap](docs/findings/ground_truth.md) | alarm episodes against curated emergence intervals; the presence-vs-growth mismatch |
 | [Spatial concentration](docs/findings/concentration.md) | the GPS v2 §3 score; exact null moments, and the count floor below which it says nothing |

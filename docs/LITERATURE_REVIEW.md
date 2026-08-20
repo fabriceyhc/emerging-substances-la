@@ -242,6 +242,31 @@ provably unchanged, confirmed algebraically before deciding not to build
 it. Full results and the reasoning for each in
 `docs/findings/benchmark.md`'s dedicated section.
 
+**Fourth update — a synthetic benchmark, to answer what 22 real substances
+structurally cannot.** Every comparison above is read against Wilson CIs
+that overlap for nearly every model pair — real, honest uncertainty at n=22,
+not a defect of any one result. `docs/SYNTHETIC_BENCHMARK_DESIGN.md` designs
+a generator with known ground truth on the emergent/non-emergent axis
+(a simulation parameter here, not a post-hoc investigation) and Monte Carlo
+replication, built specifically to include the adversarial cases each
+detector is already known to struggle with (denominator drift, batch
+arrivals, reverting blips) rather than the shapes that would flatter each
+one's own assumptions.
+
+**Built, and it paid for itself on the first run.** `docs/findings/
+synthetic.md`: `nb-trend`'s per-quarter Wald test is calibrated in isolation
+(~1.6% false-alarm rate against a nominal ~2.5%) but the ~34-quarter as-of
+sweep it's read across has no repeated-testing correction, inflating the
+real false-alarm rate to ~33% on synthetic data with no trend at all --
+`eb05`/`ears` show 0% on the identical population. The fix
+(`nb-trend-confirmed`, requiring 3 consecutive alarming quarters) is built,
+tested, and checked against real data: it cuts the genuinely noisy portion
+of `nb-trend`'s off-target list hard while correctly leaving Methamphetamine
+mostly alarmed (that one was never noise), confirming this is a second,
+additive failure mode alongside the established-vs-emerging gap `nb-trend-
+emergent` already closes -- not two descriptions of the same problem. Real
+cost: mean lag roughly doubles. P8 in `RESEARCH_LOG.md` tracks status.
+
 ### 1.6 A gap we under-weighted: right-truncation
 
 Our handling is the crudest available — a hard `CUTOFF` that discards every

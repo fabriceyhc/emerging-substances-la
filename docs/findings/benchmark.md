@@ -102,6 +102,8 @@ alongside it, not as a replacement.
 | nb-trend-own (own-count trend, no denominator) | 14/22 | 0.53 | 0.64 | 0.70 [0.48, 0.85] | 0.36 | 1.43 | 299 | 25 |
 | nb-trend-dual (min of the two above) | 14/22 | 0.45 | 0.74 | 0.78 [0.55, 0.91] | 0.35 | 1.86 | 146 | 9 |
 | nb-trend-emergent (gated by the EMERGENT_THRESHOLD analogue) | 10/22 | 0.31 | 0.67 | 0.71 [0.45, 0.88] | 0.25 | 1.50 | 69 | **7** |
+| nb-trend-confirmed (>=3 consecutive alarming quarters, synthetic-benchmark fix) | 12/22 | 0.26 | 0.85 | 0.86 [0.60, 0.96] | 0.24 | 3.75 | 87 | **4** |
+| nb-trend-confirmed-emergent (both gates at once) | 8/22 | 0.15 | 0.80 | 0.80 [0.49, 0.94] | 0.14 | 3.38 | 28 | **2** |
 | ears-weighted-role (#1 extended, ported) | 11/22 | 0.22 | 0.79 | 0.79 [0.52, 0.92] | 0.18 | 2.09 | 40 | **0** |
 | nb-trend-weighted-role (#1 extended, ported) | 14/22 | 0.51 | 0.73 | 0.78 [0.55, 0.91] | **0.39** | 1.71 | 157 | 16 |
 | nb-trend-dual-weighted-role (#1 extended, ported) | 14/22 | 0.49 | 0.75 | 0.78 [0.55, 0.91] | 0.38 | 1.71 | 137 | 13 |
@@ -149,6 +151,8 @@ below for what these rows actually show.
 | nb-trend-own | 4.32 | 4/22 | 0.09 | 0.66 | 0.67 [0.30, 0.90] | 0.08 | 1.75 | 4 |
 | nb-trend-dual | 2.48 | 11/22 | 0.25 | 0.91 | **0.92 [0.65, 0.99]** | 0.23 | 2.00 | 4 |
 | nb-trend-emergent | 1.96 | 10/22 | 0.31 | 0.67 | 0.71 [0.45, 0.88] | 0.25 | 1.50 | 7 |
+| nb-trend-confirmed | 2.01 | 12/22 | 0.26 | 0.85 | **0.92 [0.67, 0.99]** | 0.24 | 3.75 | 4 |
+| nb-trend-confirmed-emergent | 1.96 | 8/22 | 0.15 | 0.80 | 0.80 [0.49, 0.94] | 0.14 | 3.38 | **2** |
 | ears-weighted-role | 2.17 | 14/22 | 0.38 | 0.73 | 0.78 [0.55, 0.91] | 0.28 | 1.50 | 7 |
 | nb-trend-weighted-role | 2.54 | 12/22 | 0.29 | 0.80 | 0.80 [0.55, 0.93] | 0.24 | 2.17 | 3 |
 | nb-trend-dual-weighted-role | 2.37 | **13/22** | 0.30 | 0.81 | 0.81 [0.57, 0.93] | 0.25 | 2.08 | 3 |
@@ -899,6 +903,48 @@ A version that discounted only the recent-window quarters differently from
 the baseline window's would have real effect, but that is a new mechanism to
 design, not a port of #3 as it exists — not built here.
 
+## A second, independent gap: repeated-testing inflation, found by synthetic data
+
+The 22-substance benchmark could not have found this — it needs a
+population with a *known* null (no real trend at all) at a scale no real
+substance count provides. `docs/findings/synthetic.md`: `nb-trend`'s
+per-quarter Wald test is calibrated in isolation, but reading it across the
+~34-quarter as-of sweep with no repeated-testing correction inflates the
+real false-alarm rate from a nominal ~2.5% to ~33% on synthetic data with no
+trend at all — `eb05`/`ears`, checked against the identical population, show
+0%. The fix, `nb-trend-confirmed` (requiring
+`aberration.NB_TREND_CONFIRM_QUARTERS = 3` consecutive alarming quarters,
+chosen empirically off the synthetic calibration check, not assumed), is in
+the table above at both readings.
+
+**Checked against real data, this is a second, additive cause of `nb-trend`'s
+off-target load, not a restatement of the Methamphetamine finding.**
+`nb-trend-confirmed` cuts the genuinely noise-driven off-target cases hard —
+1,1-Difluoroethane, Amphetamine and Cocaine each fall from 3-4 alarm-quarters
+to 1 — while Methamphetamine keeps 19 of its 26 alarm-quarters, because that
+alarm was never noise to begin with. `nb-trend-emergent` does the reverse:
+fully zeroes Methamphetamine, does nothing for a single noisy quarter
+clearing the bar by chance. Two gates, each closing the failure mode it was
+built for, each leaving the other's failure mode almost untouched — the
+clearest evidence yet that `nb-trend`'s off-target load is not one problem,
+and that treating it as one would have left half of it unaddressed either
+way. The cost is real and large: mean lag roughly doubles (1.79 → 3.75
+quarters at the fixed line) — a confirmation rule cannot fire before its
+confirmation window elapses, by construction.
+
+**Combined (`nb-trend-confirmed-emergent`), the two gates get about as
+clean as `nb-trend` can get — 2 off-target substances, neither a documented
+negative, and Methamphetamine and Cocaine both fully gone for the first
+time — but the recall cost does not stay additive.** `detected` falls to
+8/22, below *either* gate alone (10/22, 12/22): the confirmation gate's lag
+cost lands hardest on exactly the thin, short-lived signals
+(Acetyl fentanyl, Codeine, Ephedrine, Mitragynine) this benchmark keeps
+finding are the most fragile category for every precision mechanism tried.
+Full numbers and the substance-level detail in `docs/findings/synthetic.md`.
+Read as the precision extreme of the frontier — a candidate secondary
+filter alongside a higher-recall primary, the same proposer/vetoer shape
+already validated for `eb05-dual` + TreeScan — not a new default.
+
 ## What the table says
 
 **1. Shrinkage is still unambiguously worth its complexity.** The raw `n/E`
@@ -1022,7 +1068,11 @@ discrimination.
   (Ephedrine, Benzylfentanyl) moves mean recall noticeably more than the same
   quarter would on Fentanyl. Treat point-estimate gaps under ~0.05 as
   unresolved, and remember every CI in the precision-rate table overlaps
-  every other one.
+  every other one. **This is the specific limit
+  [`SYNTHETIC_BENCHMARK_DESIGN.md`](../SYNTHETIC_BENCHMARK_DESIGN.md) exists
+  to lift** — known ground truth and Monte Carlo replication in place of one
+  real draw per substance, so a gap like this one can be resolved rather than
+  only flagged.
 - **`off_target_*` is a reviewer load, not an error rate.** The reference file
   labels 22 substances now (was 5, then 15, then 18, then +4 more) — it does
   not assert every remaining unlabelled alarm is false. Amphetamine and

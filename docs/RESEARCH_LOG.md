@@ -997,6 +997,53 @@ Licensing is not an obstacle: the method is published science and our code was
 written before the binary was ever downloaded. Do not vendor any part of their
 distribution.
 
+### P8 — synthetic benchmark for the temporal detectors `phase 1 built + first fix shipped 2026-08-19`
+
+Not from `LITERATURE_REVIEW.md`'s original priority list — added after
+building the model-the-curve family (`emerging/analysis/aberration.py`,
+`docs/LITERATURE_REVIEW.md` sec 1.5) and finding the 22-substance benchmark's
+own limit: every Wilson CI on precision overlaps every other model's, so
+`docs/findings/benchmark.md` can order detectors but not distinguish them
+statistically. Design in `docs/SYNTHETIC_BENCHMARK_DESIGN.md`: known ground
+truth on `in_alarm` x `emergent` from simulation parameters rather than
+after-the-fact investigation, Monte Carlo replication for real CIs and
+calibration checks, and adversarial scenarios modeled directly on real
+findings already in this log (para-fluorofentanyl's batch arrivals,
+Methamphetamine's denominator drift, Morphine/Mirtazapine's reverting
+blips) rather than generic added noise -- checked explicitly against the
+risk that a generator sharing a detector's own assumptions (e.g. Poisson
+counts on a log-linear ramp, `nb_trend`'s exact model) would validate
+nothing but that the detector can recover its own generative process.
+Phase 1 (aggregate counts, covers every detector except `--weighted`/
+`--role-discount`) is built; phase 2 (case-level records, needed for
+position-weighting) is scoped but not started. **First run already paid for
+itself**: `docs/findings/synthetic.md` finds `nb-trend`'s per-quarter Wald
+test is calibrated in isolation but its ~34-quarter as-of sweep has no
+repeated-testing correction at all, inflating its real false-alarm rate on
+truly flat synthetic negatives from a nominal ~2.5% to ~33-55% -- a second,
+additive cause of the real Methamphetamine off-target load alongside the
+established-vs-emerging gap already found. **Fix shipped same day**:
+`nb-trend-confirmed` (`aberration._confirmed_flags`, requiring
+`NB_TREND_CONFIRM_QUARTERS=3` consecutive alarming quarters, chosen
+empirically -- 2 only pulls the synthetic false-alarm rate to ~15% given
+~0.7 lag-1 autocorrelation between adjacent quarters, 3 reaches ~2.5%,
+nominal) at a real, honest cost (mean lag roughly doubles, 1.79 -> 3.75q on
+the real backtest). Checked against real data, not only synthetic: the two
+gates are confirmed non-redundant -- `nb-trend-confirmed` cuts the genuinely
+noisy off-target cases (1,1-Difluoroethane, Amphetamine, Cocaine: 3-4
+alarm-quarters down to 1 each) but leaves Methamphetamine mostly intact (19
+of 26 quarters, since that alarm was never noise), while `nb-trend-emergent`
+does the reverse. **Combined (`nb-trend-confirmed-emergent`), tried same
+day**: gets nb-trend's off-target load down to 2 alarm-quarters on 2
+substances (Methamphetamine and Cocaine both fully gone for the first
+time), but the recall cost does not stay additive -- `detected` falls to
+8/22, below either gate alone, because the confirmation gate's lag cost
+lands hardest on the thin, short-lived true positives (Acetyl fentanyl,
+Codeine, Ephedrine, Mitragynine) that keep turning out to be the fragile
+category for every precision mechanism this project has tried. Read as the
+precision extreme of the frontier, not a new default. Full writeup in
+`docs/findings/synthetic.md`.
+
 ### Open questions needing outside input
 
 - **Which policies?** `regime` identifies *when* something structural happened

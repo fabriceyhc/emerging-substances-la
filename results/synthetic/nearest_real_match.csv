@@ -1,0 +1,13 @@
+profile,nearest_real_substance,correlation,window_start,window_end,window_quarters,thin_match
+rare_riser,Fentanyl,0.88,2014Q1,2023Q4,40,False
+established_riser,PCP,0.9,2014Q3,2024Q2,40,False
+step_riser,Ethanol,0.8,2015Q1,2024Q4,40,False
+sigmoid_riser,Methamphetamine,0.86,2015Q3,2025Q2,40,False
+recurring_batch,Clozapine,0.85,2012Q1,2015Q4,16,True
+reverting_blip,Lidocaine,0.77,2020Q1,2025Q4,24,True
+declining_with_blip,Fentanyl,0.86,2022Q1,2025Q4,16,False
+rising_with_dip,Fentanyl,0.82,2017Q2,2025Q4,35,False
+flat_poisson,Zolpidem,0.75,2012Q1,2015Q4,16,True
+flat_negbin,Mirtazapine,0.78,2021Q3,2025Q4,18,True
+rare_riser_negbin,Acetyl fentanyl,0.81,2015Q4,2025Q3,40,False
+established_riser_batchy,Lidocaine,0.84,2019Q4,2025Q4,25,True

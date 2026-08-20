@@ -199,6 +199,32 @@ def test_nb_trend_variants_share_one_sweep_and_read_their_own_column() -> None:
     assert list(bm.model_score(sw, nb_dual)) == [1.0, -2.0]
 
 
+def test_nb_trend_emergent_confirmed_gates_and_their_conjunction() -> None:
+    """`nb-trend-emergent`/`nb-trend-confirmed` each floor `nb_trend_z` to
+    `-inf` wherever their own boolean column is `False`; the combined model
+    must require *both* (a conjunction, not a blend, the same `min`-as-AND
+    move `eb05_dual` makes) -- checked against a substance where the two
+    flags disagree, so an accidental OR would pass this test too."""
+    q = pd.date_range("2024-01-01", periods=4, freq="QS")
+    sw = pd.DataFrame({
+        "substance": ["both", "emergent_only", "confirmed_only", "neither"],
+        "as_of": [q[0]] * 4,
+        "nb_trend_z": [5.0, 5.0, 5.0, 5.0],
+        "emergent": [True, True, False, False],
+        "confirmed": [True, False, True, False],
+    })
+    emergent, confirmed, both = (bm.MODELS_BY_ID[i] for i in
+                                 ("nb-trend-emergent", "nb-trend-confirmed",
+                                  "nb-trend-confirmed-emergent"))
+    assert list(bm.model_score(sw, emergent)) == [5.0, 5.0, -np.inf, -np.inf]
+    assert list(bm.model_score(sw, confirmed)) == [5.0, -np.inf, 5.0, -np.inf]
+    s_both = bm.model_score(sw, both)
+    assert s_both.iloc[0] == 5.0                 # both flags true -- passes
+    assert s_both.iloc[1] == -np.inf              # emergent only -- fails
+    assert s_both.iloc[2] == -np.inf              # confirmed only -- fails
+    assert s_both.iloc[3] == -np.inf              # neither -- fails
+
+
 def test_veto_ensemble_fixed_threshold_matches_its_proposers_own_line() -> None:
     """`combine='veto'` never touches the proposer's own scale (see
     `build_ensemble_sweep`'s docstring), so the *ensemble's* fixed-reading

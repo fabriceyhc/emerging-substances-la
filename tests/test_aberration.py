@@ -24,7 +24,7 @@ import pandas as pd
 import pytest
 
 from emerging.analysis import aberration
-from emerging.analysis.aberration import (_emergent_flags,
+from emerging.analysis.aberration import (_confirmed_flags, _emergent_flags,
                                           _poisson_trend_slope, ears_sweep,
                                           nb_trend_sweep)
 from emerging.analysis.trends import EMERGENT_THRESHOLD
@@ -122,6 +122,47 @@ def test_nb_trend_own_and_share_agree_on_a_genuine_rise() -> None:
     row = sw.set_index("substance").loc["riser"]
     assert row["nb_trend_z"] > 1.96
     assert row["nb_trend_own_z"] > 1.96
+
+
+def test_confirmed_flags_requires_truly_consecutive_quarters_not_just_rows() -> None:
+    """The bug this guards: rolling over a substance's own *filtered* rows
+    (n_recent==0 quarters are missing entirely from a sweep) would treat two
+    alarming quarters either side of a real gap as consecutive. Two
+    substances with identical hot/cold quarter *labels* but a real missing
+    quarter in one of them must not both confirm."""
+    qs = pd.date_range("2024-01-01", periods=5, freq="QS")
+    sw = pd.DataFrame({
+        "substance": ["contig"] * 3 + ["gapped"] * 2,
+        "as_of": [qs[0], qs[1], qs[2], qs[0], qs[2]],  # "gapped" skips qs[1]
+        "score": [5.0, 5.0, 5.0, 5.0, 5.0],
+    })
+    flags = _confirmed_flags(sw, "score", threshold=1.96, min_consecutive=3)
+    assert flags[sw["substance"] == "contig"].iloc[-1]       # 3 truly consecutive
+    assert not flags[sw["substance"] == "gapped"].any()      # only 2, with a gap
+
+
+def test_confirmed_flags_needs_the_full_run_length() -> None:
+    qs = pd.date_range("2024-01-01", periods=4, freq="QS")
+    sw = pd.DataFrame({
+        "substance": ["x"] * 4, "as_of": qs, "score": [5.0, 5.0, 0.1, 5.0],
+    })
+    flags = _confirmed_flags(sw, "score", threshold=1.96, min_consecutive=3)
+    # Only 2 consecutive hot quarters at a time anywhere in this series.
+    assert not flags.any()
+
+
+def test_confirmed_flags_marks_every_quarter_from_the_kth_onward_not_just_the_kth() -> None:
+    """A sustained rise should stay confirmed for as long as it holds, not
+    flicker back to unconfirmed -- `score_model`'s episode/lag logic reads
+    contiguous alarm spans, so a single confirmed quarter surrounded by
+    unconfirmed ones on either side of an otherwise-continuing hot streak
+    would misread as multiple short episodes."""
+    qs = pd.date_range("2024-01-01", periods=5, freq="QS")
+    sw = pd.DataFrame({
+        "substance": ["x"] * 5, "as_of": qs, "score": [5.0] * 5,
+    })
+    flags = _confirmed_flags(sw, "score", threshold=1.96, min_consecutive=3)
+    assert list(flags) == [False, False, True, True, True]
 
 
 def _episode_sweep(rows) -> pd.DataFrame:

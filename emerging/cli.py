@@ -25,7 +25,7 @@ from emerging.analysis import (aberration, geo, nowcast, polysubstance,
                                 relrisk, spacetime, svtt, treescan, trends)
 from emerging.core import tree
 from emerging.ingest import census, extract, lexicon
-from emerging.validation import benchmark, ground_truth, treescan_validate
+from emerging.validation import benchmark, ground_truth, synthetic, treescan_validate
 
 app = typer.Typer(
     add_completion=False,
@@ -54,6 +54,8 @@ for _name, _mod, _help in [
     ("ground-truth", ground_truth, "score alarm episodes against known "
                                    "local emergences by interval overlap"),
     ("benchmark", benchmark, "every detector variant, scored side by side"),
+    ("synthetic", synthetic, "phase-1 aggregate-count generator with known "
+                             "ground truth -- see docs/findings/synthetic.md"),
 ]:
     app.add_typer(_mod.app, name=_name, help=_help)
 

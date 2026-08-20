@@ -96,12 +96,14 @@ TREESCAN_STATISTICS = frozenset(
 # gives the EB05 family (`Model.weighted`/`.role_discount`, reused rather than
 # duplicated) -- `aberration.ears_sweep`/`nb_trend_sweep` accept the identical
 # flags and recompute `load_quarterly` per as-of the same way `sweep_eb05`
-# does. `nb_trend`/`nb_trend_own`/`nb_trend_dual`/`nb_trend_emergent` are four
-# readings of one sweep (`aberration.nb_trend_sweep` fits both trends and the
-# `emergent` flag together, same reason `eb05`/`eb05_dual` share `sweep_eb05`),
-# so they collapse to the same key -- see `Model.sweep_key`.
+# does. `nb_trend`/`nb_trend_own`/`nb_trend_dual`/`nb_trend_emergent`/
+# `nb_trend_confirmed` are five readings of one sweep (`aberration.
+# nb_trend_sweep` fits both trends and the `emergent`/`confirmed` flags
+# together, same reason `eb05`/`eb05_dual` share `sweep_eb05`), so they
+# collapse to the same key -- see `Model.sweep_key`.
 NB_TREND_SWEEP_STATISTICS = frozenset(
-    {"nb_trend", "nb_trend_own", "nb_trend_dual", "nb_trend_emergent"})
+    {"nb_trend", "nb_trend_own", "nb_trend_dual", "nb_trend_emergent",
+     "nb_trend_confirmed", "nb_trend_confirmed_emergent"})
 # The attribution line the branch models are guarded at, and the band
 # `treescan.backtest` already calls "partly attributable" -- below it, a
 # branch is signalling on something other than the substance being credited.
@@ -180,6 +182,27 @@ class Model:
       as a hard gate here rather than a label, since `EMERGENT_THRESHOLD` is
       never used to *suppress* an EB05 alarm and this benchmark wants to ask
       whether it should for `nb_trend` specifically (Methamphetamine).
+    - `"nb_trend_confirmed"` — `nb_trend_z` gated by
+      `aberration._confirmed_flags` (`sweep["confirmed"]`): floored to
+      `-inf` unless the current quarter is the `NB_TREND_CONFIRM_QUARTERS`-th
+      or later of a run of *consecutive* alarming quarters. Not an EB05
+      analogue -- built from `docs/findings/synthetic.md` Finding 1, which
+      found `nb_trend`'s single-quarter read has no correction for the
+      ~34-quarter as-of sweep it's read across, inflating its real
+      false-alarm rate from a nominal ~2.5% to ~33% on synthetic data with
+      no real trend at all.
+    - `"nb_trend_confirmed_emergent"` — `nb_trend_z` gated by *both*
+      `confirmed` and `emergent` at once (a conjunction, not a blend, the
+      same `min`-as-AND move `eb05_dual` makes). Checked against real data
+      before this was added: `nb-trend-confirmed` and `nb-trend-emergent`
+      are non-redundant -- `confirmed` cuts the genuinely noise-driven
+      off-target cases (a single quarter clearing the bar by chance) and
+      barely touches Methamphetamine (a real, sustained trend that easily
+      clears 3 consecutive quarters); `emergent` fully zeroes Methamphetamine
+      and does nothing for one-off noise. This asks whether the two combine
+      to close both failure modes, or whether stacking a second precision
+      mechanism spends more recall than it's worth (`docs/findings/
+      benchmark.md`'s recall/precision frontier discussion applies here too).
     - `"ensemble"` — `components` (other model ids) combined per `combine`;
       see `build_ensemble_sweep` for the four modes (`"mean"`, `"max"`,
       `"threshold"`, `"veto"`) and what each one actually does to the
@@ -302,6 +325,17 @@ MODELS: list[Model] = [
           "a hard gate -- built to test whether it, not the dual gate, is "
           "what actually resolves the Methamphetamine finding",
           "nb_trend_emergent", fixed_threshold=NB_TREND_THRESHOLD),
+    Model("nb-trend-confirmed", "nb-trend gated by requiring "
+          "NB_TREND_CONFIRM_QUARTERS consecutive alarming quarters "
+          "(aberration._confirmed_flags) -- the repeated-testing "
+          "correction docs/findings/synthetic.md Finding 1 found necessary, "
+          "not an EMERGENT_THRESHOLD analogue",
+          "nb_trend_confirmed", fixed_threshold=NB_TREND_THRESHOLD),
+    Model("nb-trend-confirmed-emergent", "nb-trend gated by both confirmed "
+          "AND emergent at once -- does stacking the repeated-testing fix "
+          "on top of the established-vs-emerging fix close both failure "
+          "modes, given they're independently non-redundant on real data?",
+          "nb_trend_confirmed_emergent", fixed_threshold=NB_TREND_THRESHOLD),
     Model("ears-weighted-role", "ears, position-weighted + role-discounted "
           "case definition (GPS_V2_DESIGN.md #1, extended) -- does the same "
           "case-definition fix that helps eb05-weighted-role transfer to a "
@@ -429,7 +463,9 @@ MODELS_BY_ID = {m.id: m for m in MODELS}
 ENSEMBLE_FLOOR = {"ratio": 0.0, "eb05": 0.0, "eb05_dual": 0.0, "eb05_own": 0.0,
                   "treescan": 1.0, "treescan_branch": 1.0, "treescan_tree": 1.0,
                   "ears": 0.0, "nb_trend": 0.0, "nb_trend_own": 0.0,
-                  "nb_trend_dual": 0.0, "nb_trend_emergent": 0.0}
+                  "nb_trend_dual": 0.0, "nb_trend_emergent": 0.0,
+                  "nb_trend_confirmed": 0.0,
+                  "nb_trend_confirmed_emergent": 0.0}
 
 
 def model_score(sweep: pd.DataFrame, model: Model) -> pd.Series:
@@ -464,6 +500,11 @@ def model_score(sweep: pd.DataFrame, model: Model) -> pd.Series:
         return sweep[["nb_trend_z", "nb_trend_own_z"]].min(axis=1)
     if model.statistic == "nb_trend_emergent":
         return sweep["nb_trend_z"].where(sweep["emergent"], -np.inf)
+    if model.statistic == "nb_trend_confirmed":
+        return sweep["nb_trend_z"].where(sweep["confirmed"], -np.inf)
+    if model.statistic == "nb_trend_confirmed_emergent":
+        return sweep["nb_trend_z"].where(
+            sweep["confirmed"] & sweep["emergent"], -np.inf)
     if model.statistic == "ensemble":
         return sweep["ensemble_score"]
     raise ValueError(f"unknown statistic {model.statistic!r}")
@@ -687,6 +728,7 @@ def matched_threshold(sweep: pd.DataFrame, model: Model, budget: int) -> float:
 def build_sweeps(
     models: list[Model], mentions: Path, cutoff: str,
     recent_quarters: int, baseline_quarters: int, quiet: bool = False,
+    counts_denom: tuple[pd.DataFrame, pd.Series] | None = None,
 ) -> tuple[dict[tuple, pd.DataFrame], pd.Series]:
     """One as-of sweep per distinct (case definition, role discount, spatial
     fusion), plus one per distinct set of ensemble components, and the
@@ -707,13 +749,39 @@ def build_sweeps(
     branch readings additionally need the mentions table and the tree to
     recompute each node's excess attribution, which is loaded at most once
     however many of them were selected.
+
+    `counts_denom`, when given, is used in place of
+    `load_quarterly(mentions, cutoff=cutoff)` -- the injection point
+    `docs/SYNTHETIC_BENCHMARK_DESIGN.md` sec 6 designs, so
+    `emerging.validation.synthetic.generate_panel`'s output scores through
+    every existing `Model`/`score_model` path without a parallel pipeline.
+    Restricted to phase-1-compatible models: TreeScan (needs the real
+    substance tree) and any `weighted`/`role_discount`/spatial sweep (both
+    still read real case-level or geocoded records straight from `mentions`
+    regardless of `counts_denom`) would silently mix a synthetic panel with
+    real county data, so selecting one alongside `counts_denom` raises
+    instead of quietly doing that.
     """
     all_ids = {m.id for m in models}
     for m in models:
         all_ids.update(m.components)
     all_models = [MODELS_BY_ID[i] for i in all_ids]
 
-    counts, denom = load_quarterly(mentions, cutoff=cutoff, quiet=quiet)
+    if counts_denom is not None:
+        needs_real = sorted(m.id for m in all_models
+                            if m.statistic in TREESCAN_STATISTICS
+                            or m.weighted or m.spatial != "none")
+        if needs_real:
+            raise ValueError(
+                "counts_denom (synthetic data) cannot be combined with "
+                f"models that still read real data through `mentions`: "
+                f"{needs_real} -- TreeScan, --weighted/--role-discount and "
+                "spatial fusion all need real case-level or geocoded "
+                "records a phase-1 synthetic panel does not have "
+                "(docs/SYNTHETIC_BENCHMARK_DESIGN.md sec 5, phase 2)")
+        counts, denom = counts_denom
+    else:
+        counts, denom = load_quarterly(mentions, cutoff=cutoff, quiet=quiet)
     quarters = sorted(denom.index)
     need_spatial = {m.spatial for m in all_models} - {"none"}
     z_sweep = (_spatial_sweep(quarters, mentions,

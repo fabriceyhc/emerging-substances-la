@@ -98,8 +98,35 @@ EARS_THRESHOLD = 3.0
 # Chosen, not fitted -- like `ALARM_THRESHOLD`, this is a reading convention
 # to be checked against the backtest, not a claim that 1.96 is calibrated for
 # ~200 simultaneously-scanned substances (no multiple-testing correction is
-# applied here, matching EB05's own uncorrected per-substance line).
+# applied here, matching EB05's own uncorrected per-substance line). Per-
+# quarter, this line is well calibrated (checked directly: `docs/findings/
+# synthetic.md` Finding 1, ~1.6% false-alarm rate on 200 genuinely flat
+# synthetic substances against a nominal ~2.5%). Reading it across the
+# ~34-quarter as-of sweep with no correction is a different story -- see
+# `NB_TREND_CONFIRM_QUARTERS` below, which exists because of that finding.
 NB_TREND_THRESHOLD = 1.96
+
+# **Repeated-testing correction, found necessary by `docs/findings/
+# synthetic.md` Finding 1, not assumed in advance.** `nb_trend_sweep` scores
+# every substance at ~34 heavily overlapping as-of quarters (adjacent
+# quarters' z-scores run ~0.7 lag-1 autocorrelated -- their windows share
+# most of their data), and reading `nb_trend_z > NB_TREND_THRESHOLD` at any
+# single quarter, with no correction, inflates the practical "does this
+# substance ever alarm across its own sweep" false-positive rate from a
+# nominal ~2.5% to ~33% on synthetic data with no real trend at all --
+# `eb05`/`ears`, checked against the identical synthetic population, show
+# 0%. Requiring `NB_TREND_CONFIRM_QUARTERS` *consecutive* alarming quarters
+# before counting an alarm as confirmed brings the same population's rate
+# back to ~2.5%, at negligible detection cost on the true positives checked
+# there (49/50 vs 50/50 substances ever confirmed) -- 3 was chosen because
+# it is the smallest window that actually restores calibration (2 only gets
+# to ~15%, still ~6x nominal, because of how correlated adjacent quarters
+# are), not because it was assumed. It also happens to match CDC EARS's own
+# C3 variant (`docs/LITERATURE_REVIEW.md` sec 1.5), a three-point rule for
+# an unrelated reason (a CUSUM-like running sum, not autocorrelation), which
+# is a coincidence worth naming rather than a validation of the number --
+# the two rules are not the same mechanism.
+NB_TREND_CONFIRM_QUARTERS = 3
 
 # Below this many total mentions in the fit window, a slope estimate is
 # noise -- `nb_trend_sweep` still computes one (the Wald SE already reflects
@@ -306,6 +333,40 @@ def _emergent_flags(
     return out
 
 
+def _confirmed_flags(
+    sweep: pd.DataFrame, score_col: str, threshold: float,
+    min_consecutive: int = NB_TREND_CONFIRM_QUARTERS,
+) -> pd.Series:
+    """Per-(substance, as_of) `confirmed` flag: `True` only from the
+    `min_consecutive`-th of a run of *consecutive* quarters each individually
+    above `threshold` onward -- the repeated-testing correction
+    `NB_TREND_CONFIRM_QUARTERS`'s own docstring motivates
+    (`docs/findings/synthetic.md` Finding 1).
+
+    **Reindexed to the sweep's full quarter grid before rolling, not rolled
+    over adjacent *rows*.** A substance's own sweep is missing a row for any
+    as-of quarter where `n_recent == 0` (`nb_trend_sweep`'s own filter) --
+    rolling over the filtered rows directly would silently treat two
+    alarming quarters either side of a real gap as consecutive. Reindexing
+    to every quarter in the sweep and filling the gap with "not hot" first
+    is what keeps "consecutive" meaning what it says, the same care
+    `trends._episodes` already takes for `emergent`'s own episode logic,
+    applied here via a plain rolling window instead of explicit interval
+    arithmetic since "consecutive" is the only relationship this needs (no
+    onset/duration bookkeeping).
+    """
+    all_q = sorted(sweep["as_of"].unique())
+    out = pd.Series(False, index=sweep.index)
+    for sub, g in sweep.groupby("substance"):
+        hot = (g.set_index("as_of")[score_col] > threshold).reindex(
+            all_q, fill_value=False)
+        run = hot.astype(int).rolling(min_consecutive,
+                                      min_periods=min_consecutive).sum()
+        confirmed_q = set(run.index[run >= min_consecutive])
+        out.loc[g.index[g["as_of"].isin(confirmed_q)]] = True
+    return out
+
+
 def nb_trend_sweep(
     counts: pd.DataFrame, denom: pd.Series,
     recent_quarters: int = RECENT_QUARTERS,
@@ -355,10 +416,13 @@ def nb_trend_sweep(
     per quarter -- noisier, but not double-corrected by construction.
 
     Also returns `n_baseline` (this window's raw count sum, `phi`-uncorrected
-    since it is a diagnostic quantity here, not part of the fit) and
+    since it is a diagnostic quantity here, not part of the fit),
     `emergent` (`_emergent_flags`, `nb_trend_z`'s own alarm episodes at
     `NB_TREND_THRESHOLD`) -- the EMERGENT_THRESHOLD analogue this detector
-    was missing (see the module docstring and `docs/findings/benchmark.md`).
+    was missing (see the module docstring and `docs/findings/benchmark.md`)
+    -- and `confirmed` (`_confirmed_flags`, `NB_TREND_CONFIRM_QUARTERS`
+    consecutive alarming quarters) -- the repeated-testing correction
+    `docs/findings/synthetic.md` Finding 1 found necessary.
     """
     all_q = sorted(denom.index)
     total_q = recent_quarters + baseline_quarters
@@ -400,6 +464,7 @@ def nb_trend_sweep(
     out = pd.concat(frames, ignore_index=True)
     out["emergent"] = _emergent_flags(out, "nb_trend_z", NB_TREND_THRESHOLD,
                                       baseline_quarters)
+    out["confirmed"] = _confirmed_flags(out, "nb_trend_z", NB_TREND_THRESHOLD)
     return out
 
 
