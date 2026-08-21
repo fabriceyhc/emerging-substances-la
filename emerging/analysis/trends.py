@@ -73,6 +73,7 @@ import numpy as np
 import pandas as pd
 import typer
 from matplotlib.colors import PowerNorm
+from matplotlib.transforms import Bbox
 from scipy.optimize import minimize
 from scipy.special import gammaln
 from scipy.stats import chi2, gamma as gamma_dist
@@ -85,7 +86,7 @@ from emerging.core.concentration import (concentration_weight,
                                          sweep_concentration)
 from emerging.ingest.extract import MENTIONS_PATH, load_cohort
 from emerging.paths import results_dir
-from emerging.viz import BLUE, INK, INK_2, MUTED, ORANGE, SEQ, YELLOW
+from emerging.viz import AQUA, BLUE, INK, INK_2, MUTED, ORANGE, SEQ, YELLOW
 
 app = typer.Typer(add_completion=False)
 
@@ -2132,10 +2133,10 @@ def plot(
     fig, ax = plt.subplots(figsize=(10.5, 7))
     for censored, color, label in [
         (False, BLUE, "NFLIS date added is a real date"),
-        (True, ORANGE, "left-censored — in the catalog at its 1998-10 inception"),
+        (True, AQUA, "left-censored — in the catalog at its 1998-10 inception"),
     ]:
         g = sc[sc["date_added_censored"].fillna(False) == censored]
-        ax.scatter(g["date_added"], g["first_seen"],
+        ax.scatter(g["first_seen"], g["date_added"],
                    s=14 + 9 * np.sqrt(g["n_total"]), c=color, alpha=0.70,
                    edgecolors="white", linewidths=0.8, label=label, zorder=3)
 
@@ -2146,79 +2147,242 @@ def plot(
     ever = set(hist.index) if hist is not None else set()
     fired = sc[sc.index.isin(ever)]
     if len(fired):
-        ax.scatter(fired["date_added"], fired["first_seen"],
+        ax.scatter(fired["first_seen"], fired["date_added"],
                    s=90 + 9 * np.sqrt(fired["n_total"]), facecolors="none",
-                   edgecolors=YELLOW, linewidths=2.0, zorder=4,
+                   edgecolors=ORANGE, linewidths=2.0, alpha=0.55, zorder=4,
                    label="has fired EB05+")
+
+    # Zoom past the dead 1998-2010 stretch (no arrivals are recorded there
+    # anyway) so the crowded post-2012 cluster gets more horizontal room.
+    # Set before any pixel-space measurement below, since transData needs to
+    # reflect the final view for the label de-collision to be accurate.
+    ax.set_xlim(left=mdates.date2num(pd.Timestamp("2010-01-01")))
 
     lo = min(sc["date_added"].min(), sc["first_seen"].min())
     hi = max(sc["date_added"].max(), sc["first_seen"].max())
     ax.plot([lo, hi], [lo, hi], color=INK_2, linewidth=1, linestyle="--",
             zorder=1)
-    ax.annotate("arrived in LA as soon as the chemistry existed",
-                (hi, hi), textcoords="offset points", xytext=(-8, 8),
-                fontsize=8, color=INK_2, ha="right")
+    diag_ann = ax.annotate("arrived in LA as soon as the chemistry existed",
+                           (hi, hi), textcoords="offset points",
+                           xytext=(-8, 8), fontsize=8, color=INK_2, ha="right")
 
-    # Below the diagonal: LA recorded a death before NFLIS catalogued the
+    # Above the diagonal: LA recorded a death before NFLIS catalogued the
     # substance. Shaded and always labelled, because it is the one region a
     # reader is likely to over-interpret — see the region caption.
-    ax.fill_between([lo, hi], [lo, lo], [lo, hi], color=MUTED, alpha=0.16,
+    ax.fill_between([lo, hi], [lo, hi], [hi, hi], color=MUTED, alpha=0.16,
                     linewidth=0, zorder=0)
     below = sc[sc["first_seen"] < sc["date_added"]]
 
     # LACME records start in 2012, so every substance already circulating then
-    # shares a first_seen of 2012Q1 — the y-axis is left-censored too, and that
-    # floor row is an artifact of the extract window, not simultaneous arrival.
+    # shares a first_seen of 2012Q1 — the x-axis is left-censored too, and that
+    # floor column is an artifact of the extract window, not simultaneous
+    # arrival.
     floor = sc["first_seen"].min()
-    ax.axhline(floor, color=MUTED, linewidth=1, zorder=1)
-    ax.annotate("LACME record start — arrival dates at or below this line are "
-                "censored, not simultaneous",
-                (hi, floor), textcoords="offset points", xytext=(-8, 6),
-                fontsize=8, color=INK_2, ha="right")
+    ax.axvline(floor, color=MUTED, linewidth=1, zorder=1)
+    # The 2010 x-axis start leaves too little room left of the floor line for
+    # a caption, so it grows rightward instead, into the shaded above-diagonal
+    # band -- the one part of the plot with almost no circles in it.
+    floor_ann = ax.annotate(
+        "LACME record start\narrival dates left of this line\n"
+        "are censored, not simultaneous",
+        xy=(mdates.date2num(floor), mdates.date2num(pd.Timestamp("2018-01-01"))),
+        textcoords="offset points", xytext=(8, 0),
+        fontsize=8, color=INK_2, ha="left", va="center")
 
-    # Label only substances that arrived after the censoring floor. Many share
-    # the same x (the 1998-10 column), so labels are de-collided greedily in
-    # display space: walk top-down and push each label below the previous one
-    # whenever it would overlap, drawing a leader when it moves far.
-    # Breached substances are labelled only when their arrival is *observed*.
-    # Ten of the 24 sit on the 2012Q1 censoring floor, where the y-coordinate
-    # is an artifact of the extract window; labelling them stacks ten names in
-    # a column that the figure has already told the reader to disregard.
+    handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=7,
+                          markerfacecolor=c, markeredgecolor="white", label=lab)
+               for c, lab in [(BLUE, "First LA Death"),
+                              (AQUA, "NFLIS Add Date")]]
+    if len(fired):
+        handles.append(plt.Line2D(
+            [], [], marker="o", linestyle="", markersize=10,
+            markerfacecolor="none", markeredgecolor=ORANGE, markeredgewidth=2,
+            alpha=0.55, label="EB05++TS Alarmed"))
+    # (2024, 2012) in data space, converted to axes fraction rather than
+    # anchored via transData directly -- a data-space bbox_to_anchor fights
+    # tight_layout's own bbox computation and blows up the saved figure.
+    xlo, xhi = ax.get_xlim()
+    ylo, yhi = ax.get_ylim()
+    lx = mdates.date2num(pd.Timestamp("2024-01-01"))
+    ly = mdates.date2num(pd.Timestamp("2012-01-01"))
+    legend = ax.legend(handles=handles, frameon=False, fontsize=8.5,
+                       loc="center right",
+                       bbox_to_anchor=((lx - xlo) / (xhi - xlo),
+                                       (ly - ylo) / (yhi - ylo)),
+                       bbox_transform=ax.transAxes, markerfirst=False)
+
+    # Label only substances that arrived after the censoring floor, plus the
+    # two dominant killers (for scale) even though neither is novel by either
+    # axis. Breached substances are labelled only when their arrival is
+    # *observed*. Ten of the labelled sit on the 2012Q1 censoring floor, where
+    # the y-coordinate is an artifact of the extract window.
     labelled = sc[(sc["first_seen"] >= pd.Timestamp("2016-01-01"))
                   | sc.index.isin(below.index)
-                  | (sc.index.isin(ever) & (sc["first_seen"] > floor))]
+                  | (sc.index.isin(ever) & (sc["first_seen"] > floor))
+                  | sc.index.isin(["Fentanyl", "Methamphetamine"])]
 
-    def _label(name: str) -> str:
-        if hist is None or name not in hist.index:
-            return name
-        b = hist.loc[name, "first_breach"]
-        return f"{name}  [fired {b.year}Q{b.quarter}]"
-
+    # Many labelled substances share an x (the floor column) or a y (the
+    # 1998-10 chemical-catalog floor), so de-collision has to work in both
+    # directions at once rather than just walking down a single column: try
+    # each label at its natural position, then alternating steps above and
+    # below, and keep the first spot that neither overlaps an already-placed
+    # label nor falls outside the axes -- so a crowded row pushes labels up
+    # into open space instead of stacking off the bottom of the plot.
     fig.canvas.draw()  # transforms must be current before we measure
-    px_to_pt = 72.0 / fig.dpi
-    placed = []
+    renderer = fig.canvas.get_renderer()
+    ax_bbox = ax.get_window_extent(renderer)
+    px_per_pt = fig.dpi / 72.0
+
+    pts = []
     for name, r in labelled.iterrows():
         # transData works in numbers, not Timestamps, on a date axis.
-        xy = (mdates.date2num(r["date_added"]), mdates.date2num(r["first_seen"]))
-        _, py = ax.transData.transform(xy)
-        placed.append((name, xy, py))
-    placed.sort(key=lambda t: -t[2])
+        xy = (mdates.date2num(r["first_seen"]), mdates.date2num(r["date_added"]))
+        px, py = ax.transData.transform(xy)
+        # Clear the marker's own edge, not its center — a fixed offset is
+        # fine for the small dots but gets swallowed by the large
+        # lifetime-death bubbles (and their orange rings, drawn even bigger)
+        # for a name like Carfentanil or Fentanyl.
+        s = 14 + 9 * np.sqrt(r["n_total"])
+        if name in ever:
+            s = max(s, 90 + 9 * np.sqrt(r["n_total"]))
+        clear_pt = np.sqrt(s / np.pi) + 4.0
+        probe = ax.annotate(name, xy, xytext=(clear_pt, 0),
+                            textcoords="offset points", fontsize=8,
+                            color=INK, va="center")
+        fig.canvas.draw()
+        bb = probe.get_window_extent(renderer)
+        probe.remove()
+        pts.append((name, xy, px, py, clear_pt, bb.width + 4, bb.height + 2))
 
-    min_gap_px, last_y = 11.0 / px_to_pt, None
-    for name, xy, py in placed:
-        target_y = py if last_y is None else min(py, last_y - min_gap_px)
-        last_y = target_y
-        dy_pt = (target_y - py) * px_to_pt
+    # The aqua (left-censored) substances all share the identical 1998-10
+    # floor date_added, so their markers form one dense row directly above
+    # a wide-open band. Stack those labels straight up instead of running
+    # them through the diagonal search below: constant x, varying only the
+    # height needed to clear whichever neighbor is already there.
+    censored = set(sc.index[sc["date_added_censored"].fillna(False)])
+    up_pts = sorted((p for p in pts if p[0] in censored), key=lambda t: t[2])
+    pts = [p for p in pts if p[0] not in censored]
+    # Top of the plot first, then left to right for anything sharing a row.
+    pts.sort(key=lambda t: (-t[3], t[2]))
+
+    # Labelled markers are fixed obstacles too, not just other labels --
+    # otherwise a label happily lands on top of a *different* labelled point
+    # a short distance away (Furanyl fentanyl's label sitting on U-47700's
+    # dot, e.g.) instead of using open space a few points further out. Limited
+    # to labelled markers, not all ~200 plotted points: avoiding every small
+    # unlabelled dot in the dense floor cluster forces detours through empty
+    # space that reads worse than the odd close pass would have.
+    marker_boxes = {}
+    for name2, r2 in labelled.iterrows():
+        xy2 = (mdates.date2num(r2["first_seen"]), mdates.date2num(r2["date_added"]))
+        px2, py2 = ax.transData.transform(xy2)
+        s2 = 14 + 9 * np.sqrt(r2["n_total"])
+        if name2 in ever:
+            s2 = max(s2, 90 + 9 * np.sqrt(r2["n_total"]))
+        rad2 = np.sqrt(s2 / np.pi) * px_per_pt
+        marker_boxes[name2] = Bbox.from_bounds(px2 - rad2, py2 - rad2,
+                                               2 * rad2, 2 * rad2)
+
+    def box_for(px, py, clear_pt, w, h, dy, side):
+        cy = py + dy * px_per_pt
+        clear_px = clear_pt * px_per_pt
+        x0 = px + clear_px if side == "right" else px - clear_px - w
+        return Bbox.from_bounds(x0, cy - h / 2, w, h)
+
+    def line_clear(px, py, box, side, obstacles, own_box, start_clear_px):
+        # The connecting line from marker to text must not cut through a
+        # label placed earlier -- two text boxes can be individually clear
+        # of each other while the line reaching a *third*, taller label still
+        # pierces straight through one of them (a short label like "MDA"
+        # sitting right in the x-span of "Ephedrine"'s text, e.g.).
+        anchor_x = box.x0 if side == "right" else box.x1
+        anchor_y = box.y0 + box.height / 2
+        length = np.hypot(anchor_x - px, anchor_y - py)
+        if length <= start_clear_px:
+            return True
+        # Start past this marker's own clearance radius, not at its center --
+        # markers can sit concentrically (Fentanyl and Methamphetamine share
+        # one point), and every line leaving a shared center necessarily
+        # starts inside a sibling's own circle. That's fine; it's only a real
+        # block once the line is out in open space and still hits something.
+        t0 = start_clear_px / length
+        for t in np.linspace(t0, 1.0, 6):
+            pt = (px + t * (anchor_x - px), py + t * (anchor_y - py))
+            for b in obstacles:
+                if b is own_box:
+                    continue
+                if b.x0 <= pt[0] <= b.x1 and b.y0 <= pt[1] <= b.y1:
+                    return False
+        return True
+
+    step_pt = 9.0
+    placed_boxes = [diag_ann.get_window_extent(renderer),
+                    floor_ann.get_window_extent(renderer),
+                    legend.get_window_extent(renderer)] + list(marker_boxes.values())
+
+    # Straight up, 3/4" (54pt) above the marker, centered on it. Each label
+    # only climbs past that base height if a narrower gap would collide with
+    # a neighbor already placed -- most stay at the same height, the few in
+    # a tight patch of the row step up just enough to clear it.
+    base_up_pt, step_up_pt = 54.0, 12.0
+    for name, xy, px, py, clear_pt, w, h in up_pts:
+        offset_pt = base_up_pt
+        while True:
+            offset_px = offset_pt * px_per_pt
+            box = Bbox.from_bounds(px - w / 2, py + offset_px, w, h)
+            if box.y1 <= ax_bbox.y1 and not any(box.overlaps(b) for b in placed_boxes):
+                break
+            offset_pt += step_up_pt
+        placed_boxes.append(box)
         ax.annotate(
-            _label(name), xy, xytext=(8, dy_pt), textcoords="offset points",
-            fontsize=8, color=INK, va="center",
-            arrowprops=(dict(arrowstyle="-", color=MUTED, linewidth=0.6,
-                             shrinkA=0, shrinkB=1) if dy_pt < -5 else None),
+            name, xy, xytext=(0, offset_pt), textcoords="offset points",
+            fontsize=8, color=INK, ha="center", va="bottom", zorder=6,
+            bbox=dict(boxstyle="square,pad=0.1", facecolor="white",
+                     edgecolor="none", alpha=0.7),
+            arrowprops=dict(arrowstyle="-", color=MUTED, linewidth=0.6,
+                            shrinkA=0, shrinkB=1),
         )
 
-    ax.set_xlabel("Date added to the NFLIS catalog  —  chemical novelty",
+    for name, xy, px, py, clear_pt, w, h in pts:
+        own_box = marker_boxes.get(name)
+        best = None  # (side, dy, box) -- smallest |dy| wins, right breaks ties
+        fallback = None
+        for side in ("right", "left"):
+            for k in range(16):
+                for dy in ([0.0] if k == 0 else [step_pt * k, -step_pt * k]):
+                    box = box_for(px, py, clear_pt, w, h, dy, side)
+                    if box.y0 < ax_bbox.y0 or box.y1 > ax_bbox.y1:
+                        continue
+                    if fallback is None:
+                        fallback = (side, dy, box)
+                    if any(box.overlaps(b) for b in placed_boxes):
+                        continue
+                    if not line_clear(px, py, box, side, placed_boxes, own_box,
+                                      clear_pt * px_per_pt):
+                        continue
+                    if best is None or abs(dy) < abs(best[1]):
+                        best = (side, dy, box)
+                    break
+                if best is not None and abs(best[1]) == (0.0 if k == 0 else step_pt * k):
+                    break
+            if best is not None and best[1] == 0.0:
+                break  # can't beat a clean, undisplaced placement
+        side, chosen_dy, chosen_box = best if best is not None else fallback
+        placed_boxes.append(chosen_box)
+        dx0 = clear_pt if side == "right" else -clear_pt
+        ax.annotate(
+            name, xy, xytext=(dx0, chosen_dy), textcoords="offset points",
+            fontsize=8, color=INK, va="center",
+            ha=("left" if side == "right" else "right"), zorder=6,
+            bbox=dict(boxstyle="square,pad=0.1", facecolor="white",
+                     edgecolor="none", alpha=0.7),
+            arrowprops=(dict(arrowstyle="-", color=MUTED, linewidth=0.6,
+                             shrinkA=0, shrinkB=1) if abs(chosen_dy) > 4 else None),
+        )
+
+    ax.set_xlabel("First LA County overdose death  —  local novelty",
                   fontsize=9.5, color=INK_2)
-    ax.set_ylabel("First LA County overdose death  —  local novelty",
+    ax.set_ylabel("Date added to the NFLIS catalog  —  chemical novelty",
                   fontsize=9.5, color=INK_2)
     # Region caption lives in the figure margin, not inside the axes. Anchored
     # in the shaded region it sat on top of the very points it describes, and
@@ -2226,30 +2390,19 @@ def plot(
     # interior has no free space at this label density.
     fig.text(
         0.005, -0.012,
-        "Shaded region, below the diagonal: the LA death predates the NFLIS "
+        "Shaded region, above the diagonal: the LA death predates the NFLIS "
         "entry. Not early detection — NFLIS catalogues substances as forensic "
         "labs report them in seized drug\nevidence, and these are prescription "
         "antihistamines that are found at autopsy but rarely seized. "
-        "Yellow rings mark substances that have fired EB05+; "
+        "Orange rings mark substances that have gone EB05++TS Alarmed; "
         "the quarter is the first time.",
         fontsize=8, color=INK_2, ha="left", va="top")
 
     ax.set_title(
-        "Two kinds of new: chemical novelty vs arrival in LA County\n"
-        "points far above the diagonal are established chemistry reaching LA "
+        "Two kinds of new: arrival in LA County vs chemical novelty\n"
+        "points far below the diagonal are established chemistry reaching LA "
         "late — diffusion, not invention. Marker size = lifetime deaths.",
         fontsize=11, color=INK, loc="left")
-    handles = [plt.Line2D([], [], marker="o", linestyle="", markersize=7,
-                          markerfacecolor=c, markeredgecolor="white", label=lab)
-               for c, lab in [(BLUE, "NFLIS date added is a real date"),
-                              (ORANGE, "left-censored — in the catalog at its "
-                                       "1998-10 inception")]]
-    if len(fired):
-        handles.append(plt.Line2D(
-            [], [], marker="o", linestyle="", markersize=10,
-            markerfacecolor="none", markeredgecolor=YELLOW, markeredgewidth=2,
-            label="has fired EB05+ at some point"))
-    ax.legend(handles=handles, frameon=False, fontsize=8.5, loc="lower right")
     ax.grid(color=MUTED, alpha=0.35, linewidth=0.6)
     ax.set_axisbelow(True)
     for side in ("top", "right"):
