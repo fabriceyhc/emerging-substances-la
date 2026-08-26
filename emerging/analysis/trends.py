@@ -2968,9 +2968,18 @@ def emergence_table(
     otherwise every quarterly alarm marker would have to be refit onto a
     4x-coarser x-axis.
 
-    Row order in both matches `geo export`'s one-hot column order: current
-    EB05++TS score (`rising_substances.csv`'s `eb05`), descending, so the
-    exports read the same substances in the same priority order.
+    And two `total_deaths_by_*` companions: all-OD-deaths per quarter/year
+    (`load_quarterly`'s own `denom`, i.e. the plain cohort count, not any
+    weighted case definition) -- the denominator `known_emergences.csv`'s
+    notes actually read a rate off ("1.64% (2016Q1) -> 6.56% (2016Q2)" for
+    Fentanyl, verified to the decimal against this exact denominator), which
+    a raw death count alone can't reproduce: it conflates a substance's own
+    trend with the county's total overdose volume changing underneath it.
+
+    Row order in both substance tables matches `geo export`'s one-hot column
+    order: current EB05++TS score (`rising_substances.csv`'s `eb05`),
+    descending, so the exports read the same substances in the same
+    priority order.
     """
     m = pd.read_parquet(mentions)
     m = m[~m["is_class_term"].fillna(False)].copy()
@@ -2981,6 +2990,10 @@ def emergence_table(
 
     yearly = pd.crosstab(m["rollup"], m["year"])
     quarterly = pd.crosstab(m["rollup"], m["quarter"])
+
+    _, denom = load_quarterly(mentions, cutoff=cutoff, quiet=True)
+    total_by_quarter = denom.rename("n_total")
+    total_by_year = total_by_quarter.groupby(total_by_quarter.index.year).sum()
 
     ranking_path = RESULTS_DIR / "rising_substances.csv"
     if ranking_path.exists():
@@ -3002,6 +3015,13 @@ def emergence_table(
     quarterly.to_csv(out_q)
     typer.echo(f"wrote {out_q}: {quarterly.shape[0]} substances x "
                f"{quarterly.shape[1]} quarters")
+
+    out_total_y = out_dir / "total_deaths_by_year.csv"
+    total_by_year.to_csv(out_total_y)
+    typer.echo(f"wrote {out_total_y}: {len(total_by_year)} years")
+    out_total_q = out_dir / "total_deaths_by_quarter.csv"
+    total_by_quarter.to_csv(out_total_q)
+    typer.echo(f"wrote {out_total_q}: {len(total_by_quarter)} quarters")
 
 
 if __name__ == "__main__":

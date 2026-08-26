@@ -41,7 +41,9 @@ cells.append(md(
 "|---|---|---|",
 "| `results/trends/rising_substances.csv` | `emerging trends rank` | current EB05++TS score per substance, used only to order Part 1's cells and Part 2's grid |",
 "| `results/trends/emergence_by_quarter.csv` | `emerging trends emergence-table` | substance x quarter, raw death counts |",
+"| `results/trends/total_deaths_by_quarter.csv` | `emerging trends emergence-table` | all-OD deaths per quarter, the denominator behind each chart's second (share) line |",
 "| `data/raw/ground_truth/known_emergences.csv` | hand-curated (see `emerging/validation/ground_truth.py`) | the project's actual reference intervals -- seeds each Part 1 cell's `spans=[...]` where a substance already has one |",
+"| `results/polysubstance/profile.csv` | `emerging polysubstance profile` | trailing-4-quarter co-occurrence role (independent / principal driver / adulterant-marker / ...) -- seeds each Part 1 cell's note where a substance has enough recent cases to profile |",
 "| `results/trends/emergence_by_year.csv` | `emerging trends emergence-table` | substance x year, raw death counts (the requested deliverable table; not plotted here, quarterly is used instead so alarm markers land on the right x-position) |",
 "| `results/benchmark/method_timeline.csv` | `emerging benchmark method-timeline` | substance x as-of-quarter x method, score + alarm flag |",
 "",
@@ -57,6 +59,11 @@ cells.append(md(
 "| `EB05++TS` | **the deployed detector** -- weighted + role-discounted + spatial-fused dual-gated EB05, TreeScan-vetoed at RI 10 | not a single benchmark.py id; read from `trends alarms`'s own cache (`eb05_sweep.csv`), the one reading here expensive enough that `alarms` already pays that cost |",
 "",
 "Every method's raw score is on an incomparable scale to the others (a ratio, a posterior percentile, a recurrence interval, a Wald z) -- this notebook never plots them against each other, only *when each one alarmed*, as markers on the one line that is comparable: the substance's own raw death count.",
+"",
+"**Two more datapoints beyond the count line itself**, both already used in the actual `known_emergences.csv` reasoning rather than new for this notebook:",
+"",
+"- **Share of all OD deaths** (blue dashed line, right axis) -- a raw count conflates a substance's own trend with the county's total overdose volume changing underneath it. This is exactly the rate `known_emergences.csv`'s notes read for the established substances (Fentanyl: \"1.64% (2016Q1) -> 6.56% (2016Q2)\"); verified here to the decimal against that file's own numbers.",
+"- **Polysubstance role** (each cell's note, where a substance has enough recent cases) -- `independent` / `principal driver` / `adulterant-marker` / etc. from `emerging polysubstance profile`'s co-occurrence and cause-line-position analysis. This is the actual evidence that separated real negatives already in the ground truth (Lidocaine, Levamisole -- named last, almost always with fentanyl, i.e. a cutting agent) from real emergences, independent of how sharp the count curve looks.",
 "",
 "**Part 1's cells are generated, not hand-written** -- one substance, one cell, each seeded with that substance's `known_emergences.csv` interval if it has one. Editing a cell's `spans=[...]` list and re-running it is the intended way to try out a candidate window visually; once you're satisfied a window is right, the place that opinion actually belongs is a row in `known_emergences.csv` itself (`docs/findings/ground_truth.md` documents the process), not this notebook -- regenerating Part 1 later (when a newly-fired substance needs adding) re-seeds every cell from that file and will overwrite in-notebook edits that were never promoted there.",
 ))
@@ -107,6 +114,15 @@ cells.append(code(
 "quarterly = pd.read_csv(RESULTS / \"trends\" / \"emergence_by_quarter.csv\", index_col=0)",
 "quarterly.columns = pd.to_datetime(quarterly.columns)",
 "ranking = pd.read_csv(RESULTS / \"trends\" / \"rising_substances.csv\", index_col=0)[\"eb05\"]",
+"",
+"# Share of *all* OD deaths that quarter, not just this substance's own count",
+"# -- same denominator `load_quarterly` calls `denom` (the plain cohort",
+"# count, no weighting), which is what `known_emergences.csv`'s notes",
+"# actually read a rate off (verified to the decimal in the build script).",
+"total_deaths = pd.read_csv(RESULTS / \"trends\" / \"total_deaths_by_quarter.csv\",",
+"                           index_col=0)[\"n_total\"]",
+"total_deaths.index = pd.to_datetime(total_deaths.index)",
+"share = 100 * quarterly.div(total_deaths.reindex(quarterly.columns), axis=1)",
 "",
 "# \"Fired\" = alarmed under at least one of the four non-ensemble methods or",
 "# the deployed detector -- n/E excluded (see the table above). This is a",
@@ -188,6 +204,21 @@ cells.append(code(
 "    ax.plot(series.index, series.values, color=\"#0b0b0b\", linewidth=1.6, zorder=2)",
 "    ax.fill_between(series.index, series.values, color=\"#0b0b0b\", alpha=0.05, zorder=1)",
 "",
+"    # Share of *all* OD deaths, right axis -- a raw count conflates a",
+"    # substance's own trend with the county's total overdose volume moving",
+"    # underneath it; share is the rate `known_emergences.csv`'s own notes",
+"    # read a verdict off for the established substances.",
+"    ax2 = ax.twinx()",
+"    share_series = share.loc[substance]",
+"    ax2.plot(share_series.index, share_series.values, color=\"#2a78d6\",",
+"            linewidth=1.2, linestyle=\"--\", alpha=0.8, zorder=2,",
+"            label=\"% of all OD deaths\")",
+"    ax2.set_ylabel(\"% of all OD deaths\", fontsize=8.5, color=\"#2a78d6\")",
+"    ax2.tick_params(axis=\"y\", labelsize=8, colors=\"#2a78d6\")",
+"    ax2.spines[\"top\"].set_visible(False)",
+"    ax2.spines[\"right\"].set_color(\"#2a78d6\")",
+"    ax2.set_ylim(0, max(share_series.max(), 0.1) * 1.4)",
+"",
 "    sub = timeline[timeline[\"substance\"] == substance]",
 "    ymax = max(series.max(), 1)",
 "    for i, method in enumerate(METHOD_ORDER):",
@@ -203,9 +234,11 @@ cells.append(code(
 "    ax.set_title(f\"{substance} -- quarterly deaths, six methods' alarm quarters\",",
 "                loc=\"left\", fontsize=12)",
 "    ax.set_ylim(0, ymax * 1.4)",
-"    for side in (\"top\", \"right\"):",
-"        ax.spines[side].set_visible(False)",
-"    ax.legend(frameon=False, ncol=7, loc=\"upper left\",",
+"    ax.spines[\"top\"].set_visible(False)",
+"    ax.spines[\"right\"].set_visible(False)",
+"    h1, l1 = ax.get_legend_handles_labels()",
+"    h2, l2 = ax2.get_legend_handles_labels()",
+"    ax.legend(h1 + h2, l1 + l2, frameon=False, ncol=8, loc=\"upper left\",",
 "             bbox_to_anchor=(0, -0.08), fontsize=8.5)",
 "    fig.tight_layout()",
 "    plt.show()",
@@ -217,6 +250,7 @@ import pandas as _pd  # build-time only -- to compute the per-substance cells be
 _timeline = _pd.read_csv(ROOT / "results" / "benchmark" / "method_timeline.csv", parse_dates=["as_of"])
 _ranking = _pd.read_csv(ROOT / "results" / "trends" / "rising_substances.csv", index_col=0)["eb05"]
 _gt = _pd.read_csv(ROOT / "data" / "raw" / "ground_truth" / "known_emergences.csv")
+_profile = _pd.read_csv(ROOT / "results" / "polysubstance" / "profile.csv", index_col=0)
 
 _ALARM_METHODS = ["EB05", "EB05+", "TreeScan", "NB-Trend", "EB05++TS"]
 _ever_alarmed = _timeline.loc[_timeline["method"].isin(_ALARM_METHODS) & _timeline["alarm"],
@@ -244,7 +278,17 @@ for _name in _FIRED:
     else:
         note = "not yet in `known_emergences.csv`"
         span_line = '    # ("YYYY-MM-DD", "YYYY-MM-DD"),  # add a candidate window, or leave empty'
-    cells.append(md(f"### {_name}", "", f"*{note}*"))
+
+    if _name in _profile.index:
+        p = _profile.loc[_name]
+        poly_note = (f"polysubstance (trailing 4q, n={int(p['n_cases'])}): "
+                    f"**{p['verdict']}** -- alone {p['alone_pct']:.0f}%, "
+                    f"named last {p['last_pct']:.0f}%, with fentanyl "
+                    f"{p['with_fentanyl_pct']:.0f}%")
+    else:
+        poly_note = "polysubstance: fewer than 4 cases in the trailing 4 quarters -- no current profile"
+
+    cells.append(md(f"### {_name}", "", f"*{note}*", "", f"*{poly_note}*"))
     cells.append(code(
         f'plot_substance("{_name}", spans=[',
         span_line,
