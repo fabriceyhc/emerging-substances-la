@@ -83,7 +83,7 @@ from scipy.spatial import cKDTree
 from emerging.config import CUTOFF, SINCE
 from emerging.ingest.extract import MENTIONS_PATH, load_cohort
 from emerging.core.spatial import MAX_CASE_FRACTION, UTM11N, load_points
-from emerging.paths import PROCESSED_DIR, ZIPS_PATH, results_dir
+from emerging.paths import KNOWN_EMERGENCES_PATH, PROCESSED_DIR, ZIPS_PATH, results_dir
 from emerging.viz import INK, INK_2, MUTED, ORANGE
 
 app = typer.Typer(add_completion=False)
@@ -210,8 +210,12 @@ def export(
     mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
     ranking: Path = typer.Option(
         results_dir("trends") / "rising_substances.csv", "--ranking",
-        help="EB05++TS ranking (from `trends rank`), used only to order "
-             "the one-hot columns"),
+        help="EB05++TS ranking (from `trends rank`), used to order "
+             "the one-hot columns within each priority group"),
+    known_emergences: Path = typer.Option(
+        KNOWN_EMERGENCES_PATH, "--known-emergences",
+        help="Confirmed-emergence substances (no_emergence=False rows) "
+             "get the leftmost columns, ahead of the EB05++TS ordering"),
     out_dir: Path = typer.Option(PROCESSED_DIR, "--out-dir"),
     since: str = typer.Option(None, "--since",
                               help="Default: no lower bound (whole cohort)"),
@@ -222,8 +226,15 @@ def export(
     One row per overdose death, its geo-ids, and a one-hot column per
     substance -- not this module's own `cluster` output, which is
     substance-level localization statistics. Columns are ordered left to
-    right by current EB05++TS score (`rising_substances.csv`'s `eb05`), so
-    the substances the detector rates most highly sit first.
+    right in two tiers: first the substances `known_emergences.csv` already
+    confirms as real (`no_emergence=False` -- 15 of them today), then
+    everything else -- each tier internally sorted by current EB05++TS score
+    (`rising_substances.csv`'s `eb05`), descending. The confirmed set is
+    deliberately pinned first regardless of its current score: a substance
+    like Codeine can be a confirmed, real, ongoing emergence while sitting
+    well down the current EB05++TS ranking, and burying it among 190
+    unconfirmed candidates defeats the point of already knowing the answer
+    for it.
 
     Written to `data/processed/`, not `results/` -- unlike everything else
     this repository writes, this file carries case numbers and coordinates,
@@ -244,12 +255,22 @@ def export(
     substances = sorted(m["rollup"].unique())
     if ranking.exists():
         score = pd.read_csv(ranking, index_col=0)["eb05"]
-        order = (score.reindex(substances).fillna(-np.inf)
-                 .sort_values(ascending=False).index.tolist())
+        by_score = (score.reindex(substances).fillna(-np.inf)
+                   .sort_values(ascending=False).index.tolist())
     else:
         typer.echo(f"note: no ranking at {ranking} -- columns left "
                    "alphabetical instead of EB05++TS-ordered")
-        order = substances
+        by_score = substances
+
+    confirmed = set()
+    if known_emergences.exists():
+        gt = pd.read_csv(known_emergences)
+        confirmed = set(gt.loc[~gt["no_emergence"], "substance"]) & set(substances)
+    else:
+        typer.echo(f"note: no ground truth at {known_emergences} -- skipping "
+                   "the confirmed-emergence priority tier")
+    order = ([s for s in by_score if s in confirmed]
+             + [s for s in by_score if s not in confirmed])
 
     onehot = (pd.crosstab(m["CaseNumber"], m["rollup"]) > 0).astype(int)
     onehot = onehot.reindex(columns=order, fill_value=0)
