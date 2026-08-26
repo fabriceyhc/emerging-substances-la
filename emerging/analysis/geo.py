@@ -81,9 +81,9 @@ import typer
 from scipy.spatial import cKDTree
 
 from emerging.config import CUTOFF, SINCE
-from emerging.ingest.extract import MENTIONS_PATH
+from emerging.ingest.extract import MENTIONS_PATH, load_cohort
 from emerging.core.spatial import MAX_CASE_FRACTION, UTM11N, load_points
-from emerging.paths import ZIPS_PATH, results_dir
+from emerging.paths import PROCESSED_DIR, ZIPS_PATH, results_dir
 from emerging.viz import INK, INK_2, MUTED, ORANGE
 
 app = typer.Typer(add_completion=False)
@@ -203,6 +203,70 @@ def cluster(
             "out_of_scope=True; do not quote them. These substances\n  need a "
             "population denominator, not a case-control one.")
     typer.echo(f"\nwrote {out_dir / 'geo_clustering.csv'}")
+
+
+@app.command("export")
+def export(
+    mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
+    ranking: Path = typer.Option(
+        results_dir("trends") / "rising_substances.csv", "--ranking",
+        help="EB05++TS ranking (from `trends rank`), used only to order "
+             "the one-hot columns"),
+    out_dir: Path = typer.Option(PROCESSED_DIR, "--out-dir"),
+    since: str = typer.Option(None, "--since",
+                              help="Default: no lower bound (whole cohort)"),
+    cutoff: str = typer.Option(CUTOFF, "--cutoff"),
+) -> None:
+    """Case-level export for external geographic clustering.
+
+    One row per overdose death, its geo-ids, and a one-hot column per
+    substance -- not this module's own `cluster` output, which is
+    substance-level localization statistics. Columns are ordered left to
+    right by current EB05++TS score (`rising_substances.csv`'s `eb05`), so
+    the substances the detector rates most highly sit first.
+
+    Written to `data/processed/`, not `results/` -- unlike everything else
+    this repository writes, this file carries case numbers and coordinates,
+    and `results/` is git-committed, aggregate-only (see `paths.py`).
+    """
+    co = load_cohort(verbose=False)
+    if since is not None:
+        co = co[co["death_date"] >= pd.Timestamp(since)]
+    if cutoff is not None:
+        co = co[co["death_date"] <= pd.Timestamp(cutoff)]
+
+    m = pd.read_parquet(mentions)
+    m = m[~m["is_class_term"].fillna(False)].copy()
+    m["rollup"] = m["rollup"].fillna(m["canonical"])
+    m = m[m["CaseNumber"].isin(set(co["CaseNumber"]))]
+    m = m.drop_duplicates(subset=["CaseNumber", "rollup"])
+
+    substances = sorted(m["rollup"].unique())
+    if ranking.exists():
+        score = pd.read_csv(ranking, index_col=0)["eb05"]
+        order = (score.reindex(substances).fillna(-np.inf)
+                 .sort_values(ascending=False).index.tolist())
+    else:
+        typer.echo(f"note: no ranking at {ranking} -- columns left "
+                   "alphabetical instead of EB05++TS-ordered")
+        order = substances
+
+    onehot = (pd.crosstab(m["CaseNumber"], m["rollup"]) > 0).astype(int)
+    onehot = onehot.reindex(columns=order, fill_value=0)
+
+    out = co[["CaseNumber", "death_date", "zipcode", "lat", "lon",
+              "in_la_county"]].merge(onehot, left_on="CaseNumber",
+                                     right_index=True, how="left")
+    out[order] = out[order].fillna(0).astype(int)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "case_substance_onehot.csv"
+    out.to_csv(out_path, index=False)
+    n_geocoded = int(out["in_la_county"].fillna(False).sum())
+    typer.echo(f"wrote {out_path}: {len(out):,} cases x {len(order)} "
+               f"substances ({n_geocoded:,} in_la_county with usable "
+               "coordinates; others kept for audit, filter on that flag "
+               "before clustering)")
 
 
 @app.command("plot")

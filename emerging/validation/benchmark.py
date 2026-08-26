@@ -937,6 +937,83 @@ def run(
                f"{out_dir / 'per_substance.csv'}")
 
 
+# The six-method ladder the emergence-validation notebook annotates, each
+# read at the reading GPS_V2_DESIGN.md actually built it as -- not six
+# arbitrary picks: "ratio" -> "eb05" -> "eb05-dual" is the single-model
+# escalation from no shrinkage to the dual gate; "treescan" and "nb-trend"
+# are the two solo alternative families benchmark.md compares it against;
+# and the sixth is not a benchmark.py Model id at all -- it is the detector
+# actually deployed (`trends.alarms`'s default: weighted + role-discounted +
+# spatial-fused dual gate, TreeScan-vetoed at RI 10 -- the same combination
+# `ensemble-veto-v2role-10` names), read from `alarms`'s own cache rather
+# than rebuilt, since it is the one reading here expensive enough that
+# `alarms` already pays that cost.
+METHOD_TIMELINE_MODELS = ("ratio", "eb05", "eb05-dual", "treescan", "nb-trend")
+METHOD_TIMELINE_LABELS = {
+    "ratio": "n/E", "eb05": "EB05", "eb05-dual": "EB05+",
+    "treescan": "TreeScan", "nb-trend": "NB-Trend",
+}
+
+
+@app.command("method-timeline")
+def method_timeline(
+    mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
+    out_dir: Path = typer.Option(RESULTS_DIR, "--out-dir"),
+    cutoff: str = typer.Option(CUTOFF, "--cutoff"),
+    recent_quarters: int = typer.Option(RECENT_QUARTERS, "--recent-quarters"),
+    baseline_quarters: int = typer.Option(BASELINE_QUARTERS, "--baseline-quarters"),
+    threshold: float = typer.Option(ALARM_THRESHOLD, "--threshold"),
+) -> None:
+    """Per (substance, as-of quarter) score + alarm flag for six detection
+    methods -- n/E, EB05, EB05+, TreeScan, NB-Trend, EB05++TS -- for the
+    emergence-validation annotation notebook to overlay on the raw death
+    count. See `METHOD_TIMELINE_MODELS` above for what each id actually is
+    and why these six.
+
+    Long format (substance, as_of, method, score, threshold, alarm) rather
+    than one column per method: the six scores are on incomparable scales
+    (a ratio, an EB05 posterior percentile, a TreeScan recurrence interval,
+    a Wald z), so a wide table would invite plotting them on one shared
+    y-axis by accident.
+    """
+    models = [MODELS_BY_ID[m] for m in METHOD_TIMELINE_MODELS]
+    sweeps, _ = build_sweeps(models, mentions, cutoff, recent_quarters,
+                             baseline_quarters)
+
+    rows = []
+    for m in models:
+        sw = sweeps[m.sweep_key]
+        t = threshold if m.fixed_threshold is None else m.fixed_threshold
+        sub = sw[["substance", "as_of"]].copy()
+        sub["method"] = METHOD_TIMELINE_LABELS[m.id]
+        sub["score"] = model_score(sw, m)
+        sub["threshold"] = t
+        sub["alarm"] = sub["score"] > t
+        rows.append(sub)
+
+    # EB05++TS: the deployed detector, read from `alarms`'s own cache.
+    deployed_path = results_dir("trends") / "eb05_sweep.csv"
+    if deployed_path.exists():
+        sw = pd.read_csv(deployed_path, parse_dates=["as_of"])
+        sub = sw[["substance", "as_of"]].copy()
+        sub["method"] = "EB05++TS"
+        sub["score"] = sw["eb05"]
+        sub["threshold"] = threshold
+        sub["alarm"] = sw["credible_rise"]
+        rows.append(sub)
+    else:
+        typer.echo(f"note: no {deployed_path} -- run `trends alarms` first "
+                   "for the EB05++TS row; writing the other five without it")
+
+    tab = pd.concat(rows, ignore_index=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / "method_timeline.csv"
+    tab.to_csv(out, index=False)
+    typer.echo(f"wrote {out}: {tab['method'].nunique()} methods x "
+               f"{tab['substance'].nunique()} substances x "
+               f"{tab['as_of'].nunique()} as-of quarters")
+
+
 @app.command("plot")
 def plot(
     out_dir: Path = typer.Option(RESULTS_DIR, "--out-dir"),

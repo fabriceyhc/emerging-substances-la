@@ -2946,5 +2946,63 @@ def trend_map(
     typer.echo(f"wrote {out}")
 
 
+@app.command("emergence-table")
+def emergence_table(
+    mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
+    out_dir: Path = typer.Option(RESULTS_DIR, "--out-dir"),
+    cutoff: str = typer.Option(CUTOFF, "--cutoff"),
+) -> None:
+    """Substance x year (and x quarter) deaths tables for the
+    emergence-validation review.
+
+    Rows = substance (post metabolite-rollup, class terms dropped), columns =
+    calendar year, values = countywide deaths naming it that year -- one row
+    per case per substance, the same dedup convention `load_quarterly` uses
+    at quarterly grain. Purely a count table: no per-method alarm state here,
+    that's what the companion annotation notebook overlays on top of it.
+
+    Also writes a quarterly companion (`emergence_by_quarter.csv`): the
+    yearly table is the requested deliverable, but `benchmark
+    method-timeline`'s scores are one per as-of *quarter*, so the notebook
+    needs a raw count at that same grain to plot the annotations against --
+    otherwise every quarterly alarm marker would have to be refit onto a
+    4x-coarser x-axis.
+
+    Row order in both matches `geo export`'s one-hot column order: current
+    EB05++TS score (`rising_substances.csv`'s `eb05`), descending, so the
+    exports read the same substances in the same priority order.
+    """
+    m = pd.read_parquet(mentions)
+    m = m[~m["is_class_term"].fillna(False)].copy()
+    m["rollup"] = m["rollup"].fillna(m["canonical"])
+    m = m.drop_duplicates(subset=["CaseNumber", "rollup"])
+    if cutoff is not None:
+        m = m[m["death_date"] <= pd.Timestamp(cutoff)]
+
+    yearly = pd.crosstab(m["rollup"], m["year"])
+    quarterly = pd.crosstab(m["rollup"], m["quarter"])
+
+    ranking_path = RESULTS_DIR / "rising_substances.csv"
+    if ranking_path.exists():
+        score = pd.read_csv(ranking_path, index_col=0)["eb05"]
+        order = (score.reindex(yearly.index).fillna(-np.inf)
+                 .sort_values(ascending=False).index)
+        yearly, quarterly = yearly.reindex(order), quarterly.reindex(order)
+    else:
+        typer.echo(f"note: no ranking at {ranking_path} -- rows left "
+                   "alphabetical instead of EB05++TS-ordered")
+        yearly, quarterly = yearly.sort_index(), quarterly.sort_index()
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / "emergence_by_year.csv"
+    yearly.to_csv(out)
+    typer.echo(f"wrote {out}: {yearly.shape[0]} substances x "
+               f"{yearly.shape[1]} years")
+    out_q = out_dir / "emergence_by_quarter.csv"
+    quarterly.to_csv(out_q)
+    typer.echo(f"wrote {out_q}: {quarterly.shape[0]} substances x "
+               f"{quarterly.shape[1]} quarters")
+
+
 if __name__ == "__main__":
     app()
