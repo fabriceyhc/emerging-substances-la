@@ -68,29 +68,52 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.dates as mdates
+import matplotlib.lines as mlines
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import typer
-from matplotlib.colors import PowerNorm
+from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize, PowerNorm
+from matplotlib.patches import FancyBboxPatch, Rectangle
 from matplotlib.transforms import Bbox
 from scipy.optimize import minimize
 from scipy.special import gammaln
 from scipy.stats import chi2, gamma as gamma_dist
 
+from emerging.analysis.geo import cluster_test
 from emerging.config import (BASELINE_QUARTERS, CUTOFF, LAG_QUARTERS,
                              RECENT_QUARTERS)
 from emerging.core.causeline import causea_order, rollup_map
 from emerging.core.concentration import (concentration_weight,
                                          load_spatial_cohort,
                                          sweep_concentration)
+from emerging.core.spatial import UTM11N, load_points
 from emerging.ingest.extract import MENTIONS_PATH, load_cohort
-from emerging.paths import results_dir
+from emerging.paths import ZIPS_PATH, results_dir
 from emerging.viz import AQUA, BLUE, INK, INK_2, MUTED, ORANGE, SEQ, YELLOW
 
 app = typer.Typer(add_completion=False)
 
 RESULTS_DIR = results_dir("trends")
+
+# Sequential, single-hue (orange family, matching ORANGE's "this substance"
+# identity color) ramp for death year in `trend_map` -- light = earlier, dark =
+# more recent, so a shifting cluster reads as a shift in dot shade rather than
+# only position.
+YEAR_SEQ = LinearSegmentedColormap.from_list(
+    "seq_orange_year", ["#f4b183", ORANGE, "#7a1d0a"])
+
+# `alarm_history`-only accents -- not part of viz.py's validated categorical
+# palette (this figure uses a bespoke, small palette of its own rather than a
+# multi-series encoding). PANEL_BLUE tints only the alternating zebra rows
+# (plot background stays white) the ORANGE bars and PEAK_BEIGE diamonds both
+# read clearly against; STILL_OPEN is a darker, more saturated orange so an
+# open alarm reads as "the same color, turned up" rather than a clashing
+# second hue.
+PANEL_BLUE = "#eaf1fa"
+STILL_OPEN = "#b3551f"
+PEAK_BEIGE = "#e8dcc3"
 
 # Dated LA-local emergences used as the backtest ground truth. Only
 # para-fluorofentanyl is well powered; the rest are shown for honesty about how
@@ -2425,17 +2448,6 @@ def plot(
             .reindex(index=topn, columns=q_heat, fill_value=0))
     share = 100 * wide.div(denom.reindex(q_heat).to_numpy(), axis=1)
 
-    # Detection-practice drift. Substances named per death climbs from 1.46 in
-    # 2012 to ~1.9 and plateaus; before that plateau, a low share can mean the
-    # ME was not looking rather than the substance was not there. Mark where
-    # the climb ends so the extended left edge is not read as absence. The
-    # plateau is the mean over the last 12 quarters and the marker is the first
-    # quarter reaching 95% of it.
-    spd = (counts.groupby("quarter")["n"].sum()
-           .reindex(all_q, fill_value=0) / denom.reindex(all_q))
-    plateau = float(spd.iloc[-12:].mean())
-    reached = spd.rolling(4, min_periods=4).mean() >= 0.95 * plateau
-    drift_end = next((q for q in all_q if bool(reached.get(q, False))), None)
     fig, ax = plt.subplots(figsize=(12, 8))
     # Methamphetamine and fentanyl reach ~70% of deaths; on a linear ramp they
     # saturate the scale and every candidate under ~5% — the entire population
@@ -2446,36 +2458,72 @@ def plot(
                    norm=PowerNorm(gamma=0.4, vmin=0, vmax=float(share.to_numpy().max())))
     labels = [f"{s}  ({int(res.loc[s, 'n_total'])})" for s in share.index]
     ax.set_yticks(range(len(share)), labels, fontsize=8.5, color=INK)
+
+    # Outline every substance-quarter cell where EB05++TS's own dual-gated,
+    # TreeScan-vetoed sweep called an alarm (`credible_rise`) -- the same
+    # sweep the alarm-history figure reads, just replayed cell by cell here.
+    # `credible_rise` is a trailing-window verdict (n_recent sums
+    # RECENT_QUARTERS quarters ending at `as_of`), so it can still be True on
+    # a quarter with zero raw mentions of its own -- the window's excess came
+    # from its neighbours. Since the cell's *color* encodes only that single
+    # quarter's count, a solid outline there would read as "0 deaths, flagged
+    # anyway", which looks like a bug rather than a rolling statistic. Drawn
+    # dashed and muted instead of solid orange when this quarter's own raw
+    # count is zero, so the outline itself shows which case it is.
+    carried_over = False
+    if sweep is not None:
+        alarmed = (sweep[sweep["credible_rise"]]
+                  .groupby("substance")["as_of"].apply(set).to_dict())
+        q_pos = {q: j for j, q in enumerate(q_heat)}
+        for i, name in enumerate(share.index):
+            for q in alarmed.get(name, ()):
+                j = q_pos.get(q)
+                if j is None:
+                    continue
+                own_count = wide.loc[name, q] if (name in wide.index
+                                                   and q in wide.columns) else 0
+                if own_count > 0:
+                    style = dict(edgecolor=ORANGE, linewidth=1.4, linestyle="-")
+                else:
+                    style = dict(edgecolor=ORANGE, linewidth=1.1,
+                                linestyle=(0, (2, 1.5)), alpha=0.6)
+                    carried_over = True
+                ax.add_patch(Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False,
+                                       zorder=6, **style))
     tick = range(0, len(q_heat), 4)
     ax.set_xticks(list(tick),
                   [f"{q_heat[i].year}Q{q_heat[i].quarter}" for i in tick],
                   fontsize=8, color=INK_2)
     if trunc_from is not None and trunc_from in q_heat:
         ax.axvline(q_heat.index(trunc_from) - 0.5, color=ORANGE, linewidth=1.5)
-    drift_note = ""
-    if drift_end is not None and drift_end in q_heat:
-        xd = q_heat.index(drift_end) - 0.5
-        ax.axvline(xd, color=YELLOW, linewidth=1.8, zorder=5)
-        drift_note = (
-            f"Yellow line ({drift_end.year}Q{drift_end.quarter}): substances "
-            f"named per death stops climbing ({spd.iloc[0]:.2f} in "
-            f"{all_q[0].year} → {plateau:.2f} at plateau). Left of it the "
-            "toxicology panel was still widening, so a faint cell can mean "
-            "the ME was not testing rather than the substance was not there.")
     cb = fig.colorbar(im, ax=ax, pad=0.01)
     cb.set_label("% of all overdose deaths that quarter", fontsize=9, color=INK_2)
     cb.ax.tick_params(labelsize=8, colors=INK_2)
-    sub = ("orange line = start of incomplete reporting"
-           if trunc_from is not None and trunc_from in q_heat
-           else f"{q_heat[0].year}Q{q_heat[0].quarter}–"
-                f"{q_heat[-1].year}Q{q_heat[-1].quarter}, ending at the last "
-                "quarter with settled toxicology")
-    ax.set_title("Substance share of LA County overdose deaths, by quarter\n"
-                 "top 25 by current share (lifetime deaths in parentheses); "
-                 + sub, fontsize=11, color=INK, loc="left")
-    if drift_note:
-        fig.text(0.005, -0.005, drift_note, fontsize=8, color=INK_2,
-                 ha="left", va="top")
+    ax.set_title("Substance share of LA County overdose deaths, by quarter",
+                 fontsize=11, color=INK, loc="left")
+
+    # Caption at the bottom rather than stacked into the title -- a run-on
+    # multi-clause title line is wider than the axes, and bbox_inches="tight"
+    # then pads the whole saved figure out to fit it, leaving a wide dead
+    # margin to the right of the heatmap. Broken into short lines instead so
+    # no single line drives the figure's width.
+    date_range = (f"{q_heat[0].year}Q{q_heat[0].quarter}–"
+                  f"{q_heat[-1].year}Q{q_heat[-1].quarter}, ending at the "
+                  "last quarter with settled toxicology")
+    lines = [f"Top 25 substances by current share (lifetime deaths in "
+             f"parentheses); {date_range}."]
+    if trunc_from is not None and trunc_from in q_heat:
+        lines.append("Orange line = start of incomplete reporting.")
+    lines.append("Solid orange outline = quarter EB05++TS alarmed "
+                 "(credible_rise, dual-gated and TreeScan-vetoed).")
+    if carried_over:
+        lines.append(
+            "Dashed outline = alarmed as of that quarter but 0 mentions "
+            "that quarter itself -- credible_rise is a trailing "
+            f"{RECENT_QUARTERS}-quarter window, so a quiet quarter can "
+            "inherit its neighbours' excess.")
+    fig.text(0.005, -0.005, "\n".join(lines), fontsize=8, color=INK_2,
+             ha="left", va="top")
     fig.tight_layout()
     fig.savefig(out_dir / "share_heatmap.png", dpi=150,
                 bbox_inches="tight", facecolor="white")
@@ -2523,6 +2571,21 @@ def plot(
     # first LA death, first EB05 breach, end of the alarm. The gap between the
     # first two is the detection delay and is the point of the figure.
     if hist is not None and len(hist):
+        # Raw death dates, same rollup key as `load_quarterly` (metabolites
+        # folded into their parent, class terms dropped, one row per case) --
+        # used only for each substance's lifetime death count, which drives
+        # the bars' color. Not `n_at_peak` (the 4-quarter window at the
+        # alarm's peak): the question here is "is this substance, overall, a
+        # substantial share of the county's deaths", and a substance's peak
+        # window is a fraction of its full total (Fentanyl's is in the
+        # thousands).
+        m_life = pd.read_parquet(mentions)
+        m_life = m_life[~m_life["is_class_term"].fillna(False)]
+        m_life["rollup"] = m_life["rollup"].fillna(m_life["canonical"])
+        m_life = m_life.drop_duplicates(subset=["CaseNumber", "rollup"])
+        if cutoff is not None:
+            m_life = m_life[m_life["death_date"] <= pd.Timestamp(cutoff)]
+
         h = hist.sort_values("first_breach", ascending=False)
         fig, ax = plt.subplots(figsize=(13, 0.36 * len(h) + 2.6))
         y = np.arange(len(h))
@@ -2530,6 +2593,58 @@ def plot(
 
         x_left = pd.Timestamp("2011-07-01")
         any_open = bool(h["still_open"].any())
+        bar_height = 0.55
+
+        # Axes limits, ticks, and everything else that affects the axes'
+        # final pixel box are set before the bars themselves so that box can
+        # be measured (below) to draw genuinely round bar corners rather
+        # than ellipse arcs -- the x axis spans ~15 years and y is 12-ish
+        # unit-spaced rows, so a corner radius in raw data units would be
+        # squashed flat in one direction without correcting for that.
+        ax.set_ylim(-0.8, len(h) - 0.2)
+        ax.set_xlim(x_left - pd.Timedelta(days=60),
+                    t_end + pd.Timedelta(days=200))
+        ax.xaxis.set_major_locator(mdates.YearLocator(1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+        ax.set_yticks(y, h.index, fontsize=8.5, color=INK)
+        ax.grid(axis="x", color=MUTED, alpha=0.30, linewidth=0.6)
+        ax.set_axisbelow(True)
+        ax.tick_params(labelsize=8, colors=INK_2, length=2)
+        for side in ("top", "right", "left"):
+            ax.spines[side].set_visible(False)
+        ax.spines["bottom"].set_color(MUTED)
+
+        # Zebra banding -- with 12+ rows spanning a decade-plus x-range, a
+        # reader's eye needs help tying a mid-chart bar back to its y label.
+        # PANEL_BLUE only on the alternating bands, not the whole plot, so it
+        # reads as row striping rather than a colored backdrop.
+        for i in range(len(h)):
+            if i % 2:
+                ax.axhspan(i - 0.5, i + 0.5, color=PANEL_BLUE, zorder=0)
+
+        # FancyBboxPatch's "round" style applies one rounding_size to both
+        # dimensions of the box *after* squeezing the height by
+        # mutation_aspect -- so feeding it the data-to-pixel scale in each
+        # dimension is what keeps the rounding circular instead of
+        # squashed. Read that scale off the now-final axes box.
+        fig.canvas.draw()
+        bbox_px = ax.get_window_extent()
+        xlo, xhi = ax.get_xlim()
+        ylo, yhi = ax.get_ylim()
+        px_per_xunit = bbox_px.width / (xhi - xlo)
+        px_per_yunit = bbox_px.height / (yhi - ylo)
+        mutation_aspect = px_per_xunit / px_per_yunit
+        rounding_size = 0.5 * bar_height * (px_per_yunit / px_per_xunit)
+
+        # Bar shade = lifetime death count. Log-normed: lifetime counts here
+        # span from single digits (Carfentanil, n=23) to five figures
+        # (Fentanyl, n~10,000), and a log scale is the one whose colorbar
+        # ticks (1, 10, 100, ...) are directly readable as "an order of
+        # magnitude more deaths" -- a PowerNorm's gamma is an arbitrary knob
+        # with no such reading.
+        mag = m_life["rollup"].value_counts().reindex(h.index).fillna(0)
+        mag_norm = LogNorm(vmin=max(1.0, float(mag.min())), vmax=float(mag.max()))
+
         for i, (name, r) in enumerate(h.iterrows()):
             # Presence line: from the first LA death to the end of the window.
             # A censored onset gets a left caret at the axis edge instead of a
@@ -2537,18 +2652,30 @@ def plot(
             if pd.notna(r["first_seen"]):
                 cens = bool(r.get("first_seen_censored", False))
                 ax.hlines(i, x_left if cens else r["first_seen"], t_end,
-                          color=MUTED, alpha=0.55, linewidth=1.4, zorder=2)
+                          color=MUTED, alpha=0.65, linewidth=1.8, zorder=2)
                 ax.scatter([x_left if cens else r["first_seen"]], [i],
-                           marker="<" if cens else "o", s=30 if cens else 26,
+                           marker="<" if cens else "o", s=32 if cens else 28,
                            c=MUTED if cens else "white", edgecolors=INK_2,
-                           linewidths=1.1, zorder=4)
+                           linewidths=1.4, zorder=4)
             for s, e in _episode_spans(sweep, name, threshold,
                                        gate_col="credible_rise"):
-                ax.barh(i, e + pd.offsets.QuarterEnd(0) - s, left=s,
-                        height=0.52, color=ORANGE if r["still_open"] else BLUE,
-                        edgecolor="white", linewidth=0.8, zorder=3)
-            ax.scatter([r["peak_as_of"]], [i], marker="D", s=30, c=YELLOW,
-                       edgecolors="white", linewidths=0.9, zorder=5)
+                x0 = mdates.date2num(s)
+                width = mdates.date2num(e + pd.offsets.QuarterEnd(0)) - x0
+                # Still-open alarms get the same dashed-vs-solid edge
+                # convention as the share-of-deaths heatmap's carried-over
+                # cells: color already carries magnitude, so "still open"
+                # has to live on the outline instead of a second hue.
+                ax.add_patch(FancyBboxPatch(
+                    (x0, i - bar_height / 2), width, bar_height,
+                    boxstyle=f"round,pad=0,rounding_size={rounding_size}",
+                    mutation_aspect=mutation_aspect,
+                    facecolor=SEQ(mag_norm(mag[name])),
+                    edgecolor=INK if r["still_open"] else "white",
+                    linestyle=(0, (2, 1.5)) if r["still_open"] else "solid",
+                    linewidth=1.3, zorder=3))
+            ax.scatter([r["peak_as_of"]], [i], marker="D", s=34,
+                       c=PEAK_BEIGE, edgecolors=INK, linewidths=1.2,
+                       zorder=5)
             ax.annotate(f"peak {r['peak_eb05']:.1f}  (n={int(r['n_at_peak'])})",
                         (t_end, i), textcoords="offset points", xytext=(8, 0),
                         fontsize=7.5, color=INK_2, va="center",
@@ -2565,19 +2692,6 @@ def plot(
                     va=("bottom" if short else "center"),
                     ha=("left" if short else "right"))
 
-        ax.set_yticks(y, h.index, fontsize=8.5, color=INK)
-        ax.set_ylim(-0.8, len(h) - 0.2)
-        ax.set_xlim(x_left - pd.Timedelta(days=60),
-                    t_end + pd.Timedelta(days=200))
-        ax.xaxis.set_major_locator(mdates.YearLocator(1))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
-        ax.grid(axis="x", color=MUTED, alpha=0.30, linewidth=0.6)
-        ax.set_axisbelow(True)
-        ax.tick_params(labelsize=8, colors=INK_2, length=2)
-        for side in ("top", "right", "left"):
-            ax.spines[side].set_visible(False)
-        ax.spines["bottom"].set_color(MUTED)
-
         leg = [
             plt.Line2D([], [], marker="o", linestyle="-", color=MUTED,
                        markerfacecolor="white", markeredgecolor=INK_2,
@@ -2586,30 +2700,58 @@ def plot(
             plt.Line2D([], [], marker="<", linestyle="", color=MUTED,
                        markeredgecolor=INK_2, markersize=7,
                        label="already present when LACME records start (2012)"),
-            plt.Rectangle((0, 0), 1, 1, facecolor=BLUE,
-                          label="in alarm (EB05+)"),
-            plt.Line2D([], [], marker="D", linestyle="", color=YELLOW,
-                       markeredgecolor="white", markersize=7,
-                       label="peak EB05"),
         ]
         if any_open:
-            leg.insert(3, plt.Rectangle((0, 0), 1, 1, facecolor=ORANGE,
-                                        label="alarm still open at the cutoff"))
+            leg.append(plt.Rectangle(
+                (0, 0), 1, 1, facecolor=MUTED, alpha=0.4, edgecolor=INK,
+                linestyle=(0, (2, 1.5)), linewidth=1.3,
+                label="alarm still open at the cutoff"))
+        leg.append(plt.Line2D([], [], marker="D", linestyle="", color=PEAK_BEIGE,
+                              markeredgecolor=INK, markeredgewidth=1.2,
+                              markersize=7, label="peak EB05"))
         ax.legend(handles=leg, frameon=False, fontsize=8.5, ncol=len(leg),
-                  loc="upper left", bbox_to_anchor=(0, -0.045))
+                  loc="upper left", bbox_to_anchor=(0, -0.045),
+                  labelcolor=INK_2)
+
+        # pad is wide enough to clear the "peak ... (n=...)" annotations,
+        # which sit past the axes' right spine (annotation_clip=False)
+        # rather than inside it, so the default small colorbar pad would
+        # print through them.
+        sm = plt.cm.ScalarMappable(norm=mag_norm, cmap=SEQ)
+        sm.set_array([])
+        cb = fig.colorbar(sm, ax=ax, pad=0.16, fraction=0.02)
+        cb.set_label("lifetime deaths (n), log scale", fontsize=8.5, color=INK_2)
+        cb.ax.tick_params(labelsize=7.5, colors=INK_2)
+        # Plain integers, not "10^2" -- the scale is log, but the reader
+        # shouldn't have to exponentiate to know what a tick means.
+        cb.ax.yaxis.set_major_locator(mticker.LogLocator(base=10, subs=(1, 2, 5)))
+        cb.ax.yaxis.set_major_formatter(
+            mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+
         n_swept = len(all_q) - RECENT_QUARTERS - BASELINE_QUARTERS + 1
         # Denominator is the substances the sweep actually scored (non-zero in
         # some recent window), matching what `alarms` reports — not len(res),
         # which counts rows the sweep never scored.
         n_scored = sweep["substance"].nunique()
-        ax.set_title(
-            "Every substance the detector has ever fired on, and when\n"
-            f"{len(h)} of {n_scored} substances have fired EB05+ "
-            f"across {n_swept} as-of quarters. The number at each "
-            "bar is the detection delay — quarters from the first LA death to "
-            "the first breach — and is shown only where arrival is observed, "
-            "not censored.",
-            fontsize=11, color=INK, loc="left")
+        ax.set_title("Every substance the detector has ever fired on, and when",
+                     fontsize=11.5, color=INK, loc="left")
+
+        # Caption at the bottom, newlined -- folding it into the title
+        # instead would render wider than the axes and bbox_inches="tight"
+        # then pads the whole saved figure to fit it, leaving dead space
+        # instead of shrinking the text.
+        caption = (
+            f"{len(h)} of {n_scored} substances have fired EB05+ across "
+            f"{n_swept} as-of quarters. Bar shade = lifetime death count, so "
+            "substantial ongoing problems (fentanyl, PCP, ...) read as "
+            "visibly heavier than low-count alarms regardless of whether "
+            "the alarm has since closed.\nNumber at each bar = detection "
+            "delay in quarters, first LA death to first breach (shown only "
+            "where arrival is observed, not censored); \"(n=...)\" is the "
+            "count in the 4-quarter window at that peak, not the lifetime "
+            "total driving the shade.")
+        fig.text(0.005, -0.02, caption, fontsize=8, color=INK_2,
+                 ha="left", va="top")
         fig.tight_layout()
         fig.savefig(out_dir / "alarm_history.png", dpi=150,
                     bbox_inches="tight", facecolor="white")
@@ -2618,6 +2760,190 @@ def plot(
 
     for f in written:
         typer.echo(f"wrote {out_dir / f}")
+
+
+@app.command("trend-map")
+def trend_map(
+    mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
+    out_dir: Path = typer.Option(RESULTS_DIR, "--out-dir"),
+    lag_quarters: int = typer.Option(LAG_QUARTERS, "--lag-quarters"),
+    recent_quarters: int = typer.Option(RECENT_QUARTERS, "--recent-quarters"),
+    baseline_quarters: int = typer.Option(BASELINE_QUARTERS, "--baseline-quarters"),
+    start: str = typer.Option("2015-01-01", "--start", help="Trend x-axis start"),
+    since: str = typer.Option("2023-01-01", "--since",
+                              help="Map: only plot deaths on/after this date"),
+    cutoff: str = typer.Option(CUTOFF, "--cutoff"),
+    substances: str = typer.Option(
+        "PCP,Cocaine,Alprazolam,MDMA,Carfentanil,Methamphetamine",
+        "--substances", help="Comma-separated substances to show, in the "
+                             "order they should fill the grid"),
+    groups: int = typer.Option(
+        2, "--groups", help="Side-by-side [trend|map] column groups; "
+                            "substances fill down each group before moving "
+                            "to the next"),
+    seed: int = typer.Option(0, "--seed"),
+    n_perm: int = typer.Option(199, "--n-perm"),
+) -> None:
+    """Pair each named substance's trend panel with its geo map.
+
+    One matplotlib figure, one `plt.subplots` call, one `tight_layout` -- no
+    per-panel image compositing. An earlier version of this figure was
+    assembled by cropping and pasting separately-rendered panel images back
+    together with PIL; that is what produced the corrupted bottom row
+    (duplicated, misaligned axis labels) in `trend_map_mockup.png`. Letting
+    matplotlib own the whole grid removes that failure mode rather than
+    patching around it.
+    """
+    names = [s.strip() for s in substances.split(",") if s.strip()]
+    counts, denom = load_quarterly(mentions, cutoff=cutoff, weighted=True,
+                                   role_discount=True)
+    quarters = sorted(denom.index)
+    z_now = _z_at(_spatial_sweep(quarters, mentions,
+                                 recent_quarters=recent_quarters),
+                  quarters[-1 - lag_quarters] if lag_quarters else quarters[-1])
+    res, meta = rank_substances(counts, denom, lag_quarters, recent_quarters,
+                                baseline_quarters, z_spatial=z_now,
+                                spatial_mode="discount")
+    as_of = quarters[-1 - lag_quarters] if lag_quarters else quarters[-1]
+    ri = _treescan_ri_live(mentions, as_of, cutoff)
+    res = _apply_treescan_veto(res, ri, TREESCAN_VETO_THRESHOLD)
+    res = _attach_novelty(res, mentions)
+
+    all_q = sorted(denom.index)
+    q_plot = [q for q in all_q if q >= pd.Timestamp(start)]
+    trunc_from = all_q[-lag_quarters] if lag_quarters else None
+
+    hist, sweep = None, None
+    if ALARM_PATH.exists() and (RESULTS_DIR / "eb05_sweep.csv").exists():
+        hist = pd.read_csv(ALARM_PATH, index_col=0,
+                           parse_dates=["first_seen", "first_breach",
+                                        "last_breach", "peak_as_of"])
+        sweep = pd.read_csv(RESULTS_DIR / "eb05_sweep.csv", parse_dates=["as_of"])
+
+    def spans(name: str) -> list:
+        if sweep is None:
+            return []
+        return [(s, e) for s, e in _episode_spans(
+                    sweep, name, ALARM_THRESHOLD, gate_col="credible_rise")
+                if e >= q_plot[0]]
+
+    cand = res.loc[[n for n in names if n in res.index]]
+    missing = [n for n in names if n not in res.index]
+    if missing:
+        typer.echo(f"note: not in ranking, skipped: {', '.join(missing)}")
+
+    # --- geo data --------------------------------------------------------
+    import geopandas as gpd
+
+    bg, sets = load_points(mentions, since, cutoff)
+    co_year = load_cohort(verbose=False)[["CaseNumber", "year"]].drop_duplicates("CaseNumber")
+    bg = bg.merge(co_year, on="CaseNumber", how="left")
+    years = sorted(bg["year"].dropna().unique())
+    year_norm = Normalize(vmin=min(years), vmax=max(years))
+    zips = gpd.read_file(ZIPS_PATH).to_crs(UTM11N) if ZIPS_PATH.exists() else None
+    qx = bg["x"].quantile([0.002, 0.998]).to_numpy()
+    qy = bg["y"].quantile([0.002, 0.998]).to_numpy()
+    pad = 0.05 * (qx[1] - qx[0])
+    xlim = (qx[0] - pad, qx[1] + pad)
+    ylim = (qy[0] - pad, qy[1] + pad)
+    rng = np.random.default_rng(seed)
+
+    # --- combined figure: `groups` side-by-side [trend | map] columns,
+    # substances filling down each group before moving to the next -------
+    n = len(cand)
+    ngroups = max(1, min(groups, n))
+    nrows = int(np.ceil(n / ngroups))
+    chunks = [cand.iloc[g * nrows:(g + 1) * nrows] for g in range(ngroups)]
+
+    fig, axes = plt.subplots(
+        nrows, 2 * ngroups, figsize=(4.75 * ngroups, 3.05 * nrows),
+        gridspec_kw={"width_ratios": [1.35, 1] * ngroups}, squeeze=False)
+    for ax in axes.ravel():
+        ax.set_visible(False)
+
+    for g, chunk in enumerate(chunks):
+        for i, (name, row) in enumerate(chunk.iterrows()):
+            ax_t, ax_m = axes[i, 2 * g], axes[i, 2 * g + 1]
+            ax_t.set_visible(True)
+            ax_m.set_visible(True)
+
+            s = _quarterly_series(counts, name, q_plot)
+            is_emergent = bool(hist is not None and name in hist.index
+                               and hist.loc[name, "emergent"])
+            t = f"{_bold_title(name)}  (n={int(row.n_recent)})"
+            t += f"\nEB05+ {row.eb05:.1f}"
+            if hist is not None and name in hist.index:
+                b = hist.loc[name, "first_breach"]
+                t += f"  · fired {b.year}Q{b.quarter}"
+            _panel(ax_t, q_plot, s, t, BLUE, row["first_seen"], trunc_from,
+                   alarm_spans=spans(name),
+                   badge="EMERGENT" if is_emergent else None)
+
+            if zips is not None:
+                zips.boundary.plot(ax=ax_m, color=MUTED, linewidth=0.25,
+                                   alpha=0.55)
+            ax_m.scatter(bg["x"], bg["y"], s=1.6, c=MUTED, alpha=0.30,
+                        linewidths=0, zorder=2)
+            sel = bg[bg["CaseNumber"].isin(sets[name])] if name in sets.index \
+                else bg.iloc[:0]
+            size = float(np.clip(1400 / max(len(sel), 1), 9, 46))
+            dot_colors = YEAR_SEQ(year_norm(sel["year"]))
+            ax_m.scatter(sel["x"], sel["y"], s=size, c=dot_colors,
+                        alpha=0.85 if len(sel) < 60 else 0.6,
+                        edgecolors="white",
+                        linewidths=0.6 if len(sel) < 200 else 0.3, zorder=4)
+            ax_m.set_aspect("equal", adjustable="box")
+            ax_m.set_xlim(*xlim); ax_m.set_ylim(*ylim)
+            ax_m.set_xticks([]); ax_m.set_yticks([])
+            for side in ("top", "right", "bottom", "left"):
+                ax_m.spines[side].set_visible(False)
+
+            if name in sets.index:
+                r = cluster_test(bg, sets[name], rng, n_perm)
+                if r["out_of_scope"]:
+                    line2 = f"{100 * r['case_frac']:.0f}% of all OD deaths — no score"
+                    color2 = ORANGE
+                else:
+                    star = "*" if r["p_clustered"] < 0.05 else ""
+                    line2 = (f"localization {r['localization']:.2f}x  "
+                             f"p={r['p_clustered']:.3f}{star}")
+                    color2 = INK
+                ax_m.annotate(line2, (0, 1.01), xycoords="axes fraction",
+                             fontsize=8.5, color=color2, ha="left", va="bottom")
+
+    fig.suptitle("Top EB05+ substances: trend, and where they're dying",
+                 fontsize=12, color=INK, x=0.01, y=1.0, ha="left", va="top")
+    fig.tight_layout(rect=(0, 0.07, 1, 0.985))
+
+    year_handles = [
+        mlines.Line2D([], [], marker="o", linestyle="none", markersize=7,
+                      markerfacecolor=YEAR_SEQ(year_norm(y)),
+                      markeredgecolor="white", markeredgewidth=0.6,
+                      label=str(int(y)))
+        for y in years
+    ]
+    fig.legend(handles=year_handles, title="death year", loc="upper right",
+              bbox_to_anchor=(0.99, 1.0), frameon=False, fontsize=8,
+              title_fontsize=8, labelcolor=INK_2, ncol=len(years),
+              handletextpad=0.3, columnspacing=0.8)
+
+    fig.text(0.01, 0.04,
+             "Left: quarterly deaths naming the substance (same as "
+             "rising_candidates.png). Right: deaths naming the substance "
+             f"against all overdose deaths (grey), {since}–{cutoff}.",
+             fontsize=8, color=INK_2, ha="left")
+    fig.text(0.01, 0.005,
+             "Dot color = year of death (light → dark = earlier → "
+             "more recent), to show whether the geography is shifting.\n"
+             "* = localization test p<0.05 (geo.py, one-sided, unadjusted "
+             f"for the {n} shown here).",
+             fontsize=8, color=INK_2, ha="left")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / "trend_map.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    typer.echo(f"wrote {out}")
 
 
 if __name__ == "__main__":
