@@ -6,6 +6,51 @@ not deleted — the artifact is usually the more useful record.
 
 ---
 
+## 2026-08-27 — Shortening `RECENT_QUARTERS` doesn't buy earlier detection, it costs it
+
+A reasonable-sounding objection to the detector: `EB05`'s `n_recent` sums
+over a trailing 4-quarter window, so a substance's first spike gets diluted
+against 3 phantom zero-quarters before it's compared to baseline — doesn't
+that mean a new substance needs a year's worth of presence before the
+detector is useful? Tested it rather than guessing, with `trends backtest
+--recent-quarters {2,3,4}` (`emerging/analysis/trends.py`) against the 5
+known LA emergences, `--treescan-veto` on (default) throughout since
+TreeScan's own window is independent of `RECENT_QUARTERS` and this is meant
+to reflect the actually-deployed detector, not an isolated EB05 term.
+
+**Result: shortening the window doesn't move `credible_rise`'s first-clear
+quarter earlier for any of the 5, and makes it later or makes it fail
+outright for the two marginal ones.** para-Fluorofentanyl and Mitragynine
+clear at the identical quarter (2021Q2, 2022Q4) regardless of window.
+Bromazolam clears 2024Q1 at 4q, 2024Q2 at 3q, and never clears at 2q.
+Carfentanil clears 2024Q3 at 4q and 3q, never clears at 2q. Xylazine never
+clears at any window. Peak EB05 also drops monotonically with a shorter
+window for every one of the 5 (e.g. para-Fluorofentanyl 8.68 → 8.06 → 6.82
+n=69→52→37; Bromazolam 2.55 → 1.92 → 1.36).
+
+**Why: EB05 is an empirical-Bayes shrinkage estimate, not a raw ratio, and
+shrinkage punishes a shorter window harder than dilution was hurting it.**
+The objection above is real — a shorter window does reduce the
+diluted-by-zero-quarters effect — but a shorter window also hands the
+shrinkage estimator less data, which pulls the point estimate toward the
+prior (≈1, "nothing unusual") *before* it gets compared to
+`ALARM_THRESHOLD`. Those two effects run in opposite directions, and on
+this evidence the shrinkage-power loss dominates for every known emergence
+except the best-powered one (para-Fluorofentanyl), where it's a wash, not a
+win.
+
+**Conclusion: kept `RECENT_QUARTERS=4` as-is.** No code change from this —
+the three backtests were written to scratch, not
+`results/trends/backtest_known_emergences.csv`, since the point was
+answering the question, not replacing the calibrated default. If this gets
+revisited, the fix for genuinely-new substances' first-quarter dilution
+probably isn't a shorter window (this result says that trade is a net
+loss) — it'd need something that treats a substance's *first* window
+differently from a steady-state one, which `RECENT_QUARTERS` alone can't
+express.
+
+---
+
 ## 2026-08-19 — `emergent` is a second axis on `alarm_history`, not a second detector
 
 A question about the project's framing surfaced a gap: `alarm_history.csv`

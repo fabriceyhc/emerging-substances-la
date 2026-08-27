@@ -115,6 +115,13 @@ PANEL_BLUE = "#eaf1fa"
 STILL_OPEN = "#b3551f"
 PEAK_BEIGE = "#e8dcc3"
 
+# `alarm_history_ridgeline`-only: sequential orange ramp for the episode
+# boxes, starting at a visibly saturated light orange rather than white so a
+# just-barely-alarming quarter (eb05 near ALARM_THRESHOLD) still reads as
+# colored, not blank.
+RIDGE_BOX_SEQ = LinearSegmentedColormap.from_list(
+    "seq_orange_strength", ["#fce2c8", "#e8792a", "#7a1d0a"])
+
 # Dated LA-local emergences used as the backtest ground truth. Only
 # para-fluorofentanyl is well powered; the rest are shown for honesty about how
 # thin the evidence is at LA-county scale.
@@ -2010,6 +2017,221 @@ def _panel(ax, x, y, title: str, color: str, first_seen=None,
         ax.spines[side].set_color(MUTED)
 
 
+def _alarm_history_ridgeline(
+    h: pd.DataFrame, sweep: pd.DataFrame, counts: pd.DataFrame,
+    all_q: list, mag: pd.Series, threshold: float, out_dir: Path,
+) -> None:
+    """Ridgeline variant of Figure 5: each substance's own quarterly-death
+    shape (raw count + the rolling average EB05 actually tracks), with alarm
+    episodes shown as a box underneath -- colored per quarter by EB05++TS
+    signal strength -- rather than a bar-style fill overlaid on the line
+    itself (tried first; read as a bar plot glued onto a line plot).
+
+    A separate figure from `alarm_history.png`, not a replacement: the bar
+    version is the compact, at-a-glance summary; this trades some of that
+    compactness for the fuller trajectory (raw noise, smoothing, and how the
+    signal built/faded within each episode) plots reviewers asked to see.
+
+    Ridge height is per-row normalized (each substance scaled to its own
+    peak quarter) rather than a shared scale -- tried a shared sqrt scale
+    first so Fentanyl's ridge would visibly dominate, but it flattened every
+    smaller, more-recently-emergent substance into an illegible sliver,
+    which defeats the point of a per-substance shape plot. Overall scale
+    (Fentanyl's ~10k lifetime deaths vs. Carfentanil's 23) is instead
+    reported as an exact number in each row's annotation.
+    """
+    if not len(h):
+        return
+    t_end = max(all_q) + pd.offsets.QuarterEnd(0)
+    x_left = pd.Timestamp("2011-07-01")
+
+    # Per-quarter EB05 within each episode -- what actually drives
+    # credible_rise -- collected up front so the box color scale can span
+    # the full range across every row rather than each row normalizing
+    # against itself.
+    episode_cache = {}
+    strength_values = []
+    for name in h.index:
+        sub_sweep = sweep[sweep["substance"] == name]
+        eps = _episode_spans(sweep, name, threshold, gate_col="credible_rise")
+        scored = []
+        for sp, ep in eps:
+            ep_sub = sub_sweep[(sub_sweep["as_of"] >= sp)
+                               & (sub_sweep["as_of"] <= ep)].sort_values("as_of")
+            vals = ep_sub["eb05"].to_numpy(dtype=float)
+            scored.append((sp, ep, vals))
+            strength_values.extend(vals.tolist())
+        episode_cache[name] = scored
+    if not strength_values:
+        return
+    # vmin=0, not `threshold`: normalizing against the alarm floor squeezed
+    # every just-barely-alarming quarter into the bottom ~2% of the
+    # colormap -- effectively invisible. Starting at 0 gives those quarters
+    # real color while still preserving the ordering.
+    strength_norm = Normalize(vmin=0, vmax=max(strength_values))
+
+    fig, ax = plt.subplots(figsize=(13, 0.58 * len(h) + 2.6))
+    y0 = np.arange(len(h))
+    # Zebra bands are 1 unit tall, centered on each row (i +/- 0.5). row_h
+    # (the ridge's rise) and box_h (the box below baseline) both have to
+    # fit inside that half-height on their own side, or they spill into the
+    # neighboring row and float disconnected from their own label.
+    row_h = 0.40
+    box_h = 0.20
+    box_top = -0.06  # gap below the ridge baseline
+    box_bottom = box_top - box_h
+
+    for i in range(len(h)):
+        if i % 2:
+            ax.axhspan(i - 0.5, i + 0.5, color=PANEL_BLUE, zorder=0)
+
+    # Axes limits/ticks/labels are set before any patches are drawn so the
+    # axes' final pixel box can be measured (below) to keep the boxes'
+    # corners genuinely round rather than squashed -- same technique Figure
+    # 5's FancyBboxPatch bars use.
+    ax.set_ylim(-0.6, len(h) - 1 + row_h + 0.5)
+    # Right edge sits just past t_end, not 200 days out -- the zebra bands
+    # below fill the axes' full width (0-1 in axes fraction), so padding
+    # the axes out that far to make room for the "peak ..." annotation just
+    # dragged the band out with it and painted it straight across the text.
+    # `annotation_clip=False` on that annotate call already lets it render
+    # outside the axes, so ending the axes at the data means the text sits
+    # past the band in blank figure space instead.
+    ax.set_xlim(x_left - pd.Timedelta(days=60), t_end + pd.Timedelta(days=20))
+    ax.xaxis.set_major_locator(mdates.YearLocator(1))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    ax.set_yticks(y0, h.index, fontsize=8.5, color=INK)
+    ax.grid(axis="x", color=MUTED, alpha=0.30, linewidth=0.6)
+    ax.set_axisbelow(True)
+    ax.tick_params(labelsize=8, colors=INK_2, length=2)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color(MUTED)
+
+    fig.canvas.draw()
+    bbox_px = ax.get_window_extent()
+    xlo, xhi = ax.get_xlim()
+    ylo, yhi = ax.get_ylim()
+    px_per_xunit = bbox_px.width / (xhi - xlo)
+    px_per_yunit = bbox_px.height / (yhi - ylo)
+    mutation_aspect = px_per_xunit / px_per_yunit
+    rounding_size = 0.5 * box_h * (px_per_yunit / px_per_xunit)
+
+    for i, (name, r) in enumerate(h.iterrows()):
+        s = _quarterly_series(counts, name, all_q)
+        smoothed = s.rolling(RECENT_QUARTERS, min_periods=1).mean()
+        peak_n = float(s.max()) or 1.0
+        x = mdates.date2num(pd.DatetimeIndex(all_q))
+        y_raw = i + (s.to_numpy() / peak_n) * row_h
+        y_smooth = i + (smoothed.to_numpy() / peak_n) * row_h
+
+        # Smoothed curve is the primary shape (bold, filled) -- it's what
+        # the alarm actually reacts to. Raw quarterly counts sit on top as
+        # a thin dotted line so the real, noisier trendline stays visible.
+        ax.plot(x, y_smooth, color=INK_2, linewidth=1.4, zorder=3)
+        ax.fill_between(x, i, y_smooth, color=MUTED, alpha=0.35, linewidth=0,
+                        zorder=2)
+        ax.plot(x, y_raw, color=INK_2, linewidth=0.7, linestyle=":",
+               alpha=0.8, zorder=4)
+
+        # Episode box underneath -- shrunk into a strip below the ridge's
+        # baseline. Color varies *within* the box, one block per quarter,
+        # tracking how the EB05++TS signal actually moved during the
+        # episode (building, peaking, fading) instead of one flat color for
+        # the whole span. Implemented as an invisible rounded patch that
+        # only draws the outline, plus a per-quarter color image clipped to
+        # that same outline -- imshow can't do rounded corners on its own,
+        # but clipping one to a patch's path gets a single rounded pill
+        # with a blocky per-quarter fill inside it. Dashed edge = alarm
+        # still open at the cutoff.
+        for sp, ep, vals in episode_cache[name]:
+            x0 = mdates.date2num(sp)
+            width = mdates.date2num(ep + pd.offsets.QuarterEnd(0)) - x0
+            still_open_ep = bool(r["still_open"] and ep == r["last_breach"])
+            outline = FancyBboxPatch(
+                (x0, i + box_bottom), width, box_h,
+                boxstyle=f"round,pad=0,rounding_size={rounding_size}",
+                mutation_aspect=mutation_aspect, facecolor="none",
+                edgecolor=INK if still_open_ep else "white",
+                linestyle=(0, (2, 1.5)) if still_open_ep else "solid",
+                linewidth=1.1, zorder=4)
+            ax.add_patch(outline)
+            fill = RIDGE_BOX_SEQ(strength_norm(vals)).reshape(1, -1, 4)
+            im = ax.imshow(fill, extent=(x0, x0 + width, i + box_bottom,
+                                         i + box_top),
+                           aspect="auto", interpolation="nearest", zorder=3)
+            im.set_clip_path(outline)
+
+        # First-seen marker (censored -> caret at left edge).
+        if pd.notna(r["first_seen"]):
+            cens = bool(r.get("first_seen_censored", False))
+            fx = x_left if cens else r["first_seen"]
+            ax.scatter([fx], [i], marker="<" if cens else "o",
+                       s=28 if cens else 24, c=MUTED if cens else "white",
+                       edgecolors=INK_2, linewidths=1.2, zorder=5)
+
+        # Peak marker -- peak *EB05*, not peak raw count, so it doesn't
+        # generally land where the curve is tallest. Place it on the
+        # smoothed curve's own value at that quarter rather than at a
+        # fixed row-top height, or it floats disconnected from the line.
+        peak_x = r["peak_as_of"]
+        peak_y = i + (float(smoothed.get(peak_x, 0.0)) / peak_n) * row_h
+        ax.scatter([peak_x], [peak_y], marker="D", s=30, c=PEAK_BEIGE,
+                  edgecolors=INK, linewidths=1.1, zorder=6)
+
+        ax.annotate(f"peak {r['peak_eb05']:.1f} (lifetime n={int(mag[name])})",
+                   (t_end, i + row_h * 0.5), textcoords="offset points",
+                   xytext=(8, 0), fontsize=7.5, color=INK_2, va="center",
+                   annotation_clip=False)
+
+        if pd.notna(r["lag_quarters"]):
+            ax.annotate(f"{int(r['lag_quarters'])}q", (r["first_breach"], i),
+                       textcoords="offset points", xytext=(2, -20),
+                       fontsize=7, color=INK_2, va="top", ha="left")
+
+    any_open = bool(h["still_open"].any())
+    leg = [
+        plt.Line2D([], [], color=INK_2, linewidth=1.4,
+                  label=f"{RECENT_QUARTERS}q rolling avg (what EB05 tracks)"),
+        plt.Line2D([], [], color=INK_2, linewidth=0.9, linestyle=":",
+                  label="raw quarterly deaths"),
+        plt.Line2D([], [], marker="D", linestyle="", color=PEAK_BEIGE,
+                  markeredgecolor=INK, markersize=7, label="peak"),
+        plt.Line2D([], [], marker="o", linestyle="", color="white",
+                  markeredgecolor=INK_2, markersize=6, label="first LA death"),
+    ]
+    if any_open:
+        leg.append(plt.Rectangle(
+            (0, 0), 1, 1, facecolor=MUTED, alpha=0.4, edgecolor=INK,
+            linestyle=(0, (2, 1.5)), linewidth=1.1,
+            label="alarm still open at the cutoff"))
+    ax.legend(handles=leg, frameon=False, fontsize=8.5, ncol=len(leg),
+             loc="upper left", bbox_to_anchor=(0, -0.045), labelcolor=INK_2)
+
+    sm = plt.cm.ScalarMappable(norm=strength_norm, cmap=RIDGE_BOX_SEQ)
+    sm.set_array([])
+    cb = fig.colorbar(sm, ax=ax, pad=0.14, fraction=0.015)
+    cb.set_label("EB05++TS signal strength during episode -- box color "
+                "below each ridge", fontsize=8.5, color=INK_2)
+    cb.ax.tick_params(labelsize=7.5, colors=INK_2)
+
+    ax.set_title("Every substance the detector has ever fired on, and when",
+                 fontsize=11.5, color=INK, loc="left")
+    fig.text(0.005, -0.02,
+             "Each ridge scaled to its own peak raw quarter, not comparable "
+             "across rows -- absolute scale is the lifetime-n count at "
+             f"right instead. Solid line = {RECENT_QUARTERS}-quarter "
+             "rolling average, the window EB05 is computed from; dotted = "
+             "raw quarterly count.\nBox underneath = the in-alarm span; "
+             "each block is one quarter, colored by how strong the "
+             "EB05++TS signal was that quarter (darker = stronger).",
+             fontsize=8, color=INK_2, ha="left", va="top")
+    fig.tight_layout()
+    fig.savefig(out_dir / "alarm_history_ridgeline.png", dpi=150,
+               bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
 @app.command("plot")
 def plot(
     mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
@@ -2757,6 +2979,12 @@ def plot(
                     bbox_inches="tight", facecolor="white")
         plt.close(fig)
         written.append("alarm_history.png")
+
+        # Figure 5b: ridgeline variant -- separate figure, does not replace
+        # the bar version above.
+        _alarm_history_ridgeline(h, sweep, counts, all_q, mag, threshold,
+                                 out_dir)
+        written.append("alarm_history_ridgeline.png")
 
     for f in written:
         typer.echo(f"wrote {out_dir / f}")
