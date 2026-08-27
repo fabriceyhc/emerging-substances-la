@@ -6,6 +6,50 @@ not deleted — the artifact is usually the more useful record.
 
 ---
 
+## 2026-08-27 — Dyad co-occurrence lift, and a metabolite-parent mapping the data didn't support
+
+Two additions to `polysubstance.py` / `lexicon.py`, prompted by asking
+whether known potentiating drug combinations (opioid+benzo, opioid+xylazine,
+cocaine+ethanol...) actually show up as *enriched* co-occurrence in LA
+deaths, and whether every `METABOLITE_PARENT` entry has a data-backed parent.
+
+**Dyads (`polysubstance dyads`, new).** Lift = observed co-occurrence /
+expected-under-independence, over full history for power plus a trailing
+4-quarter read. Result: several literature-flagged synergistic combinations
+(fentanyl+gabapentinoids, +Z-drugs, +barbiturates, +diphenhydramine) score
+lift **below 1** — they co-occur *less* than chance in this corpus — while
+Fentanyl+Methamphetamine, the single largest combination (5,199 deaths),
+sits at lift≈1: not sought together, both just prevalent enough that
+independence predicts the overlap. Highest-lift dyads are Fentanyl+Xylazine
+(1.70, n=7), Methadone+Rx benzos (1.62, n=35), and Fentanyl+Designer benzos
+(1.59, n=95). Read `lift` as "is this pairing concentrating in the local
+supply", not as a danger score — it cannot speak to per-occurrence
+pharmacological risk, only to whether a pairing is more common than
+independence predicts. Full writeup: `docs/findings/polysubstance.md`.
+
+**Metabolite parent audit.** Checked every `METABOLITE_PARENT` entry against
+actual co-occurrence with its claimed parent. Twelve hold up (most barely
+co-occur with the named parent at all, which is *why* the rollup matters —
+e.g. 7-Aminoclonazepam names Clonazepam in 0 of 6 mentions — without the
+rollup those deaths are invisible to the parent's count, not merely
+double-counted). One did not: **Nordiazepam→Diazepam** had no evidentiary
+basis — nordiazepam is the shared active metabolite of diazepam *and*
+chlordiazepoxide, and of its 24 mentions only 1 also names Diazepam versus 4
+that also name Chlordiazepoxide. Removed the mapping; Nordiazepam is now its
+own canonical substance. Reran `lexicon build` + `extract extract` to bring
+the parquet artifacts in sync (40,411 mentions, unchanged; distinct
+canonicals 211→219). Did **not** rerun the full `emerging pipeline` — the
+shift is 23 mentions out of 40,411 landing on a substance nowhere near any
+alarm threshold, and it isn't worth the diff across every downstream result
+file for that. Also confirmed the fentanyl-analog design this question was
+really asking about is already correct: analogs are not metabolites (they're
+independently synthesized, independently sold compounds), kept as their own
+canonical substances, and only Norfentanyl — the one true fentanyl
+metabolite in the corpus — rolls up, with all 8 of its mentions already
+co-occurring with a separately-named Fentanyl anyway.
+
+---
+
 ## 2026-08-27 — Shortening `RECENT_QUARTERS` doesn't buy earlier detection, it costs it
 
 A reasonable-sounding objection to the detector: `EB05`'s `n_recent` sums

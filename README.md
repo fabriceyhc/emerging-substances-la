@@ -69,6 +69,7 @@ emerging treescan      plot
 emerging treescan-validate compare   # vs the TreeScan C++ binary
 emerging polysubstance profile   # cause vs passenger
 emerging polysubstance plot
+emerging polysubstance dyads     # co-occurrence lift for potentiating pairs
 emerging geo           cluster   # is it localized?
 emerging geo           plot
 emerging census        fetch     # ACS population per zip per year
@@ -105,7 +106,7 @@ keeps its own Typer app.
 | `analysis/trends.py` | gamma-Poisson empirical-Bayes ranking, as-of backtest, alarm history, watchlist, recording diagnostics, figures |
 | `analysis/aberration.py` | model-the-curve family: EARS moving-baseline z-score, Poisson trend-slope Wald z, and the `emergent` (EMERGENT_THRESHOLD) annotation — complementary to EB05, see `docs/LITERATURE_REVIEW.md` sec 1.5 |
 | `analysis/treescan.py` | tree-temporal scan statistic: every node × every recent window, with a Monte Carlo p-value adjusted for the whole search |
-| `analysis/polysubstance.py` | is a flagged substance a cause of death or a passenger — co-occurrence plus position on the ME's cause line |
+| `analysis/polysubstance.py` | is a flagged substance a cause of death or a passenger — co-occurrence plus position on the ME's cause line; also pairwise co-occurrence lift for literature-flagged potentiating dyads |
 | `analysis/geo.py` | case-control permutation test for spatial localization against the overdose-death background |
 | `analysis/spacetime.py` | space-time scan over circles of zipcodes × recent quarters — separates "over-represented here" from "growing here" |
 | `analysis/svtt.py` | spatial variation in temporal trends — where a *slope* differs from the county, not where a *level* is high |
@@ -163,7 +164,7 @@ calibrated, and which artifacts would have manufactured a false result.
 | [EB05 ranking](docs/findings/trends.md) | does the ranking work, how the expected count is computed, four caveats that change conclusions |
 | [Poisson assumption check](docs/findings/dispersion.md) | whether each substance's deaths arrive independently; 9 of 21 do not |
 | [Tree-temporal scan](docs/findings/treescan.md) | scanning the hierarchy; validation against the TreeScan binary |
-| [Cause or passenger](docs/findings/polysubstance.md) | co-occurrence and position on the cause line |
+| [Cause or passenger](docs/findings/polysubstance.md) | co-occurrence and position on the cause line; dyad co-occurrence lift; metabolite/analog rollup design |
 | [Spatial localization](docs/findings/geo.md) | is it localized, and the provenance of the method |
 | [Space-time scan](docs/findings/spacetime.md) | where, and is it growing there |
 | [Spatial variation in trends](docs/findings/svtt.md) | where mortality is rising fastest; the Pomona Valley |

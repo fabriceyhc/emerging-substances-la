@@ -55,6 +55,7 @@ Usage:
     emerging polysubstance profile
     emerging polysubstance profile --quarters 8 --top 30
     emerging polysubstance plot
+    emerging polysubstance dyads
 """
 
 from __future__ import annotations
@@ -70,6 +71,7 @@ import typer
 
 from emerging.config import CUTOFF, RECENT_QUARTERS
 from emerging.core.causeline import causea_order, rollup_map
+from emerging.core.tree import FAMILIES
 from emerging.ingest.extract import MENTIONS_PATH, TEXT_FIELDS, load_cohort
 from emerging.paths import results_dir
 from emerging.viz import AQUA, BLUE, INK, INK_2, MUTED, ORANGE
@@ -79,6 +81,7 @@ app = typer.Typer(add_completion=False)
 RESULTS_DIR = results_dir("polysubstance")
 
 PROFILE_PATH = RESULTS_DIR / "profile.csv"
+DYADS_PATH = RESULTS_DIR / "dyads.csv"
 
 # Below this many cases in the window the percentages are not worth printing.
 MIN_CASES = 4
@@ -362,6 +365,149 @@ def plot(
                 facecolor="white")
     plt.close(fig)
     typer.echo(f"wrote {out_dir / 'polysubstance.png'}")
+
+
+# --- dyads: pharmacologically-motivated pairs ------------------------------
+# `profile`/`plot` above answer "cause or passenger" for one substance at a
+# time. This answers a different question: which *pairs* are enriched beyond
+# what each partner's own prevalence predicts, for the combinations
+# toxicology literature flags as potentiating (additive/synergistic CNS or
+# respiratory depression, or a metabolic interaction like cocaine+ethanol ->
+# cocaethylene).
+#
+# `lift` is co-occurrence enrichment (observed / expected-under-independence),
+# not a danger score. It answers a market/prescribing question -- is this
+# combination sought or supplied together more than chance -- and says
+# nothing about how dangerous the combination is on the occasions it occurs.
+# The two can and do diverge here: Fentanyl+Gabapentinoids and
+# Fentanyl+Z-drugs both carry real synergistic-depression literature and both
+# score lift < 1 in LA deaths, while Fentanyl+Methamphetamine sits at lift
+# ~1 -- not sought together, just both so prevalent that chance alone
+# predicts the overlap. Read `lift` as "is this pairing concentrating in the
+# local supply", not as "is this pairing more lethal than the others".
+#
+# Candidates are curated from the literature, not mined from the data --
+# the point is to test whether flagged combinations actually show up as
+# enriched, which is itself the finding when they do not.
+RX_BENZOS = frozenset(FAMILIES["Prescription benzodiazepines"])
+DESIGNER_BENZOS = frozenset(FAMILIES["Designer benzodiazepines"])
+GABAPENTINOIDS = frozenset(FAMILIES["Gabapentinoids"])
+Z_DRUGS = frozenset(FAMILIES["Z-drugs"])
+BARBITURATES = frozenset(FAMILIES["Barbiturates"])
+
+# (label_a, member_a, label_b, member_b, mechanism). A member is a substance
+# name or a family of them; family membership is OR'd.
+DYAD_CANDIDATES: list[tuple[str, str | frozenset, str, str | frozenset, str]] = [
+    ("Fentanyl", "Fentanyl", "Prescription benzos", RX_BENZOS,
+     "additive/synergistic CNS + respiratory depression (FDA black-box)"),
+    ("Fentanyl", "Fentanyl", "Designer benzos", DESIGNER_BENZOS,
+     "same mechanism, novel/unscheduled analogs (bromazolam etc.)"),
+    ("Fentanyl", "Fentanyl", "Ethanol", "Ethanol",
+     "additive CNS + respiratory depression"),
+    ("Fentanyl", "Fentanyl", "Xylazine", "Xylazine",
+     "alpha-2 agonist adds non-opioid sedation; naloxone does not reverse it"
+     " ('tranq dope')"),
+    ("Fentanyl", "Fentanyl", "Gabapentinoids", GABAPENTINOIDS,
+     "respiratory depression synergy (2019 FDA warning)"),
+    ("Fentanyl", "Fentanyl", "Z-drugs", Z_DRUGS,
+     "GABA-A potentiation, same axis as benzos"),
+    ("Fentanyl", "Fentanyl", "Barbiturates", BARBITURATES,
+     "GABA-A potentiation, same axis as benzos"),
+    ("Fentanyl", "Fentanyl", "Diphenhydramine", "Diphenhydramine",
+     "sedating antihistamine, additive CNS depression; also a known adulterant"),
+    ("Fentanyl", "Fentanyl", "Methamphetamine", "Methamphetamine",
+     "opposing-effects combination ('goofball') -- cardiac strain + delayed"
+     " overdose recognition"),
+    ("Fentanyl", "Fentanyl", "Cocaine", "Cocaine",
+     "opposing-effects combination ('speedball')"),
+    ("Cocaine", "Cocaine", "Ethanol", "Ethanol",
+     "transesterified to cocaethylene in vivo -- longer half-life, more"
+     " cardiotoxic than cocaine alone"),
+    ("Methadone", "Methadone", "Prescription benzos", RX_BENZOS,
+     "additive respiratory depression; methadone's long/variable half-life"
+     " compounds risk"),
+    ("Heroin", "Heroin", "Ethanol", "Ethanol",
+     "additive CNS + respiratory depression"),
+    ("Methamphetamine", "Methamphetamine", "Ethanol", "Ethanol",
+     "cardiovascular strain -- weaker literature support than the others;"
+     " included as a check"),
+]
+
+
+def _has(sets: pd.Series, member: str | frozenset) -> pd.Series:
+    if isinstance(member, str):
+        return sets.apply(lambda st: member in st)
+    return sets.apply(lambda st: bool(st & member))
+
+
+def dyad_stats(
+    sets: pd.Series, label_a: str, a: str | frozenset,
+    label_b: str, b: str | frozenset,
+) -> dict:
+    """Co-occurrence enrichment for one dyad over one case-set window."""
+    n = len(sets)
+    in_a, in_b = _has(sets, a), _has(sets, b)
+    n_a, n_b, n_both = int(in_a.sum()), int(in_b.sum()), int((in_a & in_b).sum())
+    expected = (n_a / n) * (n_b / n) * n if n else np.nan
+    lift = n_both / expected if expected else np.nan
+    return {
+        "dyad": f"{label_a} + {label_b}", "n_a": n_a, "n_b": n_b,
+        "n_both": n_both, "expected": expected, "lift": lift,
+        "pct_of_a_also_b": 100 * n_both / n_a if n_a else np.nan,
+        "pct_of_b_also_a": 100 * n_both / n_b if n_b else np.nan,
+    }
+
+
+def dyads_table(
+    sets_full: pd.Series, sets_recent: pd.Series,
+    candidates: list[tuple] = DYAD_CANDIDATES,
+) -> pd.DataFrame:
+    """One row per candidate dyad: full-history lift plus a recent-window
+    read, so a dyad that is enriched only historically (or only just now)
+    is visible rather than averaged away."""
+    rows = []
+    for label_a, a, label_b, b, mechanism in candidates:
+        full = dyad_stats(sets_full, label_a, a, label_b, b)
+        recent = dyad_stats(sets_recent, label_a, a, label_b, b)
+        rows.append({
+            **full,
+            "recent_n_both": recent["n_both"], "recent_lift": recent["lift"],
+            "mechanism": mechanism,
+        })
+    return (pd.DataFrame(rows).set_index("dyad")
+            .sort_values("lift", ascending=False, kind="stable"))
+
+
+@app.command("dyads")
+def dyads(
+    mentions: Path = typer.Option(MENTIONS_PATH, "--mentions"),
+    out_dir: Path = typer.Option(RESULTS_DIR, "--out-dir"),
+    cutoff: str = typer.Option(CUTOFF, "--cutoff"),
+    recent_quarters: int = typer.Option(RECENT_QUARTERS, "--recent-quarters"),
+) -> None:
+    """Co-occurrence lift for pharmacologically-motivated substance dyads.
+
+    Full history (all settled quarters) sets the lift baseline -- rare dyads
+    (e.g. anything with Xylazine, n=9 lifetime) need every quarter of power
+    they can get -- and the trailing `recent_quarters` window is reported
+    alongside so a dyad that has faded, or that only just started
+    concentrating, does not hide inside a 14-year average.
+    """
+    sets_full, qs_full = case_sets(mentions, cutoff, quarters=10_000)
+    sets_recent, qs_recent = case_sets(mentions, cutoff, quarters=recent_quarters)
+
+    tbl = dyads_table(sets_full, sets_recent)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tbl.to_csv(out_dir / DYADS_PATH.name)
+
+    q = lambda t: f"{t.year}Q{t.quarter}"  # noqa: E731
+    typer.echo(f"full history {q(qs_full[0])}-{q(qs_full[-1])}: {len(sets_full):,} "
+               f"deaths; recent window {q(qs_recent[0])}-{q(qs_recent[-1])}: "
+               f"{len(sets_recent):,} deaths")
+    cols = ["n_a", "n_b", "n_both", "lift", "pct_of_a_also_b",
+            "pct_of_b_also_a", "recent_n_both", "recent_lift"]
+    typer.echo("\n" + tbl[cols].to_string(float_format=lambda v: f"{v:.2f}"))
+    typer.echo(f"\nwrote {out_dir / DYADS_PATH.name}")
 
 
 if __name__ == "__main__":

@@ -208,13 +208,21 @@ SUPPLEMENT: dict[str, str] = {
 # (so nothing is silently merged) but tagged with a parent, so emergence
 # analysis can collapse them — otherwise NORFENTANYL reads as its own rising
 # substance when it is just evidence of fentanyl.
+#
+# Each entry here needs a *specific* parent the metabolite could only have come
+# from. Nordiazepam is deliberately absent for that reason: it is the shared
+# active metabolite of diazepam, chlordiazepoxide, and clorazepate (only the
+# first two are in this corpus), and the corpus's own co-occurrence does not
+# point to diazepam — of its 24 mentions, 1 also names Diazepam vs. 4 that also
+# name Chlordiazepoxide, and most name neither. A hard-coded single parent here
+# would be a guess the data contradicts, so Nordiazepam is tracked as its own
+# canonical substance instead (see docs/findings/polysubstance.md).
 METABOLITE_PARENT: dict[str, str] = {
     "Norfentanyl": "Fentanyl",
     "6-Monoacetylmorphine": "Heroin",
     "7-Hydroxymitragynine": "Mitragynine",
     "Cocaethylene": "Cocaine",
     "Benzoylecgonine": "Cocaine",
-    "Nordiazepam": "Diazepam",
     "Norchlorcyclizine": "Chlorcyclizine",
     "EDDP": "Methadone",
     "Norbuprenorphine": "Buprenorphine",
