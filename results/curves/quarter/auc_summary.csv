@@ -1,0 +1,43 @@
+model,label,n_pos,n_neg,roc_auc,pr_auc
+treescan,"TreeScan, substance-leaf node, deaths reference (P1, solo)",167,1492,0.8686126406704019,0.6804554172122443
+ensemble-threshold,"ensemble, soft OR by native threshold: eb05-dual OR treescan, each at its own calibrated line",175,3522,0.9011584327086883,0.6230201747388121
+eb05-v2-role,"GPS v2 + role discount: weighted+role, dual-gated, spatial (#1 extended+#2+#3) -- candidate to replace eb05-v2",175,3305,0.9006838124054463,0.6154540650416952
+eb05-v2,GPS v2: weighted + dual-gated + spatial (#1+#2+#3),175,3305,0.9005186946185434,0.6144575549079316
+eb05-weighted-role,"EB05, position-weighted + substance role discount (#1, extended)",175,3305,0.9000043224551546,0.6128326126954131
+ensemble-veto-v2role-nbtrend-1,"ensemble: eb05-v2-role proposes, nb-trend vetoes below z 1 -- directly comparable to ensemble-veto-v2role-10 (same proposer, treescan swapped for nb-trend as the vetoer)",175,3508,0.8619791496986481,0.6098067196127839
+eb05-weighted,"EB05, position-weighted case definition (#1)",175,3305,0.8996931056840285,0.6068046844250624
+eb05-spatial,"EB05, spatial-concentration E-discount (#3)",175,3508,0.9138002932073627,0.6046519927318067
+ensemble-threshold-nbtrend,"ensemble, soft OR by native threshold: eb05-dual OR nb-trend, each at its own calibrated line -- the union design that worked for treescan, tried on the other independent axis",175,3508,0.9020353477765108,0.6026983788749586
+treescan-tree,"TreeScan as designed: max(leaf, attributed branch) over the whole hierarchy -- the aggregation the leaf-only row cannot show",168,1979,0.8758316489809669,0.5952841290820686
+nb-trend-weighted-role,"nb-trend, position-weighted + role-discounted case definition (#1, extended)",175,3305,0.8729301923492544,0.5926036162972251
+eb05-dual-role,"weighted+role, dual-gated, no spatial (#1 extended+#2) -- eb05-v2-role without #3",175,3305,0.8919455370650529,0.5925772333724811
+ensemble-veto-v2role-2,"ensemble: eb05-v2-role (the best solo GPS detector) proposes, treescan vetoes below RI 2",175,3330,0.8077631917631919,0.5890098093632417
+eb05-spatial-prior,"EB05, spatial covariate-adjusted prior (#3)",175,3508,0.9054992669815931,0.5869305958151242
+eb05,"classic EB05 (single gate, raw counts)",175,3508,0.9068626812184395,0.5850829023063187
+ensemble-veto-eb05dual-nbtrend-0,"ensemble: eb05-dual proposes, nb-trend vetoes below z 0 -- does an independently-significant trend corroborate eb05-dual's alarms the way treescan's veto does?",175,3508,0.8844021827659228,0.5849488886284842
+eb05-dual,"EB05 dual-gated, share AND own-count (#2)",175,3508,0.8977585926046587,0.5846725337570797
+ensemble-veto-eb05dual-nbtrend-1,"ensemble: eb05-dual proposes, nb-trend vetoes below z 1 -- tighter floor than the 0-line above",175,3508,0.8592506922951622,0.5788830897359223
+nb-trend-dual-weighted-role,"nb-trend-dual, position-weighted + role-discounted case definition (#1, extended) -- the position-weighted analogue of eb05-v2-role's own #1-extended layer, minus the spatial term (see aberration.py's docstring for why #3 doesn't port the same way)",175,3305,0.853043440674303,0.5722424380392017
+ensemble-veto-v2role-tree-10,"ensemble: eb05-v2-role proposes, treescan-tree vetoes below RI 10 -- the deployed default's veto with the leaf-only vetoer swapped for the whole hierarchy",175,3448,0.7900994365263507,0.5640469234842949
+ensemble-veto-tree-2,"ensemble: eb05-dual proposes, the full tree reading (treescan-tree) vetoes below RI 2",175,3589,0.8263392110814793,0.5638369460879498
+nb-trend,"log-linear Poisson trend, Wald z of the fitted slope over the same window EB05 sees -- 'model the curve, alarm on the derivative' read literally (docs/LITERATURE_REVIEW.md sec 1.5)",175,3508,0.8727879133409349,0.5621322632538118
+ensemble-veto-nbtrend-ears-0,"ensemble: nb-trend proposes, ears vetoes below z 0 -- does the cleanest off-target detector in the table clean up nb-trend's own off-target load (Methamphetamine et al., see docs/findings/benchmark.md)?",175,3508,0.8617926372373351,0.5601838949933435
+ensemble-veto-2,"ensemble: eb05-dual proposes, treescan vetoes below RI 2 -- matches or slightly beats eb05-dual alone at both readings, at zero-to-one fewer off-target substances",175,3522,0.8073951488602255,0.5553390224497653
+treescan-branch-attr,"TreeScan, branch nodes only, credited only where the substance drives >= 15% of the branch's excess",143,1278,0.7984558477516224,0.5513438135805454
+ensemble-veto-v2role-10,"ensemble: eb05-v2-role proposes, treescan vetoes below RI 10",175,3330,0.7613110253110253,0.5392286607894603
+ensemble-veto-tree-10,"ensemble: eb05-dual proposes, treescan-tree vetoes below RI 10",175,3589,0.7900083588743382,0.5390559076634894
+ensemble-mean,"ensemble, soft AND: mean rank of eb05-dual + treescan -- kept as a negative comparison, see build_ensemble_sweep's docstring",175,3522,0.9168021416403018,0.5317167597746093
+nb-trend-dual,"nb-trend's eb05-dual analogue: min(nb-trend, nb-trend-own) -- built to catch the same share-vs-count denominator drift Gate B catches for EB05 (Methamphetamine, Cocaine on nb-trend's own off-target list, see docs/findings/benchmark.md)",175,3508,0.8522169734484444,0.5303185697488347
+eb05-own-role,"weighted+role, Gate B (self-referential) alone -- no share gate, no dual AND, no spatial",175,3305,0.8511951588502269,0.5216218167218946
+ensemble-max,"ensemble, soft OR by rank: max rank of eb05-dual + treescan -- also loses to eb05-dual alone, see build_ensemble_sweep's docstring",175,3522,0.9141826884075607,0.5094629858354512
+ensemble-veto-10,"ensemble: eb05-dual proposes, treescan vetoes below RI 10 -- best IoU and fully clean off-target of any model in the table, at one fewer detected emergence",175,3522,0.7609556258619291,0.5093087433450791
+ears,"EARS C2-style moving-baseline z-score on share of OD deaths -- CDC syndromic-surveillance aberration detection, no EB05/GPS underneath it at all (docs/LITERATURE_REVIEW.md sec 1.5)",175,3508,0.83662322853885,0.4952893635130801
+ensemble-veto-nbtrend-ears-1,"ensemble: nb-trend proposes, ears vetoes below z 1 -- tighter floor than the 0-line above",175,3508,0.7907981755986316,0.491643198399209
+ears-weighted-role,"ears, position-weighted + role-discounted case definition (GPS_V2_DESIGN.md #1, extended) -- does the same case-definition fix that helps eb05-weighted-role transfer to a detector with no shrinkage in it at all?",175,3305,0.8343272098551977,0.4897639230344688
+ensemble-threshold-ratio,"ensemble, soft OR by native threshold: eb05-dual + treescan + raw ratio, each at its own line",175,3522,0.8374600470511885,0.48801172611939975
+nb-trend-own,"nb-trend's Gate B analogue: trend slope on the substance's raw count, no county-total offset at all",175,3508,0.842974425802248,0.3692132902442017
+nb-trend-confirmed,"nb-trend gated by requiring NB_TREND_CONFIRM_QUARTERS consecutive alarming quarters (aberration._confirmed_flags) -- the repeated-testing correction docs/findings/synthetic.md Finding 1 found necessary, not an EMERGENT_THRESHOLD analogue",175,3508,0.6651734810229679,0.32570290657290496
+nb-trend-emergent,"nb-trend gated by the EMERGENT_THRESHOLD analogue (aberration._emergent_flags): alarms only where the substance's own alarm episode reads as previously rare, mirroring trends.alarm_history's `emergent` column but wired as a hard gate -- built to test whether it, not the dual gate, is what actually resolves the Methamphetamine finding",175,3508,0.6166631373187816,0.2282078868738348
+ratio,"raw n/E, no shrinkage",175,3508,0.5350855188141391,0.20031514226895294
+treescan-branch,"TreeScan, branch nodes only, credited to every member present -- the unguarded form, kept to price the attribution guard",171,3699,0.7217748119058573,0.1814728492371038
+nb-trend-confirmed-emergent,"nb-trend gated by both confirmed AND emergent at once -- does stacking the repeated-testing fix on top of the established-vs-emerging fix close both failure modes, given they're independently non-redundant on real data?",175,3508,0.5620345333116142,0.14466974698086954

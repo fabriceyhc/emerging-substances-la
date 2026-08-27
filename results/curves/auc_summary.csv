@@ -1,0 +1,7 @@
+model,label,n_pos,n_neg,roc_auc,pr_auc
+eb05,"classic EB05 (single gate, raw counts)",15,196,0.9945578231292518,0.913894623894624
+eb05-dual,"EB05 dual-gated, share AND own-count (#2)",15,196,0.9938775510204081,0.9116232025055554
+eb05-v2-role,"GPS v2 + role discount: weighted+role, dual-gated, spatial (#1 extended+#2+#3) -- candidate to replace eb05-v2",15,196,0.9792517006802721,0.8713658551987622
+nb-trend,"log-linear Poisson trend, Wald z of the fitted slope over the same window EB05 sees -- 'model the curve, alarm on the derivative' read literally (docs/LITERATURE_REVIEW.md sec 1.5)",15,196,0.9731292517006802,0.7418867639505725
+treescan,"TreeScan, substance-leaf node, deaths reference (P1, solo)",15,196,0.979421768707483,0.7340194887098912
+ratio,"raw n/E, no shrinkage",15,196,0.9037414965986394,0.6475761985443482

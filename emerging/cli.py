@@ -25,7 +25,8 @@ from emerging.analysis import (aberration, geo, nowcast, polysubstance,
                                 relrisk, spacetime, svtt, treescan, trends)
 from emerging.core import tree
 from emerging.ingest import census, extract, lexicon
-from emerging.validation import benchmark, ground_truth, synthetic, treescan_validate
+from emerging.validation import (benchmark, curves, ground_truth, synthetic,
+                                 treescan_validate)
 
 app = typer.Typer(
     add_completion=False,
@@ -54,6 +55,7 @@ for _name, _mod, _help in [
     ("ground-truth", ground_truth, "score alarm episodes against known "
                                    "local emergences by interval overlap"),
     ("benchmark", benchmark, "every detector variant, scored side by side"),
+    ("curves", curves, "substance-level ROC / precision-recall curves + AUC"),
     ("synthetic", synthetic, "phase-1 aggregate-count generator with known "
                              "ground truth -- see docs/findings/synthetic.md"),
 ]:
@@ -76,6 +78,7 @@ PIPELINE: list[tuple[str, str]] = [
     ("ground-truth", "score"),
     ("benchmark", "run"),
     ("benchmark", "plot"),
+    ("curves", "run"),
     ("trends", "watch"),
     ("trends", "regime"),
     ("trends", "plot"),
