@@ -2128,8 +2128,10 @@ def _alarm_history_ridgeline(
         # Smoothed curve is the primary shape (bold, filled) -- it's what
         # the alarm actually reacts to. Raw quarterly counts sit on top as
         # a thin dotted line so the real, noisier trendline stays visible.
-        ax.plot(x, y_smooth, color=INK_2, linewidth=1.4, zorder=3)
-        ax.fill_between(x, i, y_smooth, color=MUTED, alpha=0.35, linewidth=0,
+        # BLUE, not grey: the same "quarterly death count" identity color
+        # `_panel` uses for Figure 1's trend lines.
+        ax.plot(x, y_smooth, color=BLUE, linewidth=1.4, zorder=3)
+        ax.fill_between(x, i, y_smooth, color=BLUE, alpha=0.16, linewidth=0,
                         zorder=2)
         ax.plot(x, y_raw, color=INK_2, linewidth=0.7, linestyle=":",
                alpha=0.8, zorder=4)
@@ -2191,7 +2193,7 @@ def _alarm_history_ridgeline(
 
     any_open = bool(h["still_open"].any())
     leg = [
-        plt.Line2D([], [], color=INK_2, linewidth=1.4,
+        plt.Line2D([], [], color=BLUE, linewidth=1.4,
                   label=f"{RECENT_QUARTERS}q rolling avg (what EB05 tracks)"),
         plt.Line2D([], [], color=INK_2, linewidth=0.9, linestyle=":",
                   label="raw quarterly deaths"),
